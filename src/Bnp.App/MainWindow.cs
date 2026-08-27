@@ -3,6 +3,7 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
@@ -18,6 +19,18 @@ namespace Bnp;
 
 public sealed class MainWindow : Window, IDisposable
 {
+    private static readonly (string Label, string Color)[] TextColorOptions =
+    [
+        ("Red", "#E53935"),
+        ("Orange", "#FB8C00"),
+        ("Yellow", "#FDD835"),
+        ("Green", "#43A047"),
+        ("Teal", "#00897B"),
+        ("Blue", "#1E88E5"),
+        ("Purple", "#8E24AA"),
+        ("Gray", "#616161")
+    ];
+
     private readonly IDocumentRepository _repository;
     private readonly AutosaveCoordinator _autosave;
     private readonly List<DocumentSummary> _documents;
@@ -39,6 +52,8 @@ public sealed class MainWindow : Window, IDisposable
     private readonly Button _maximizeButton = new();
     private readonly Button _closeButton = new();
     private readonly List<Control> _resizeZones = new();
+    private Button? _textColorButton;
+    private IBrush? _activeTextColor;
     private DocumentRecord _currentDocument;
     private BnpPalette _palette = BnpTheme.GetPalette(ThemeVariant.Light);
     private bool _isLayoutReady;
@@ -202,7 +217,7 @@ public sealed class MainWindow : Window, IDisposable
             Children =
             {
                 collapseButton,
-                BnpIcons.Create(LucideIconKind.NotebookPen, 19),
+                // BnpIcons.Create(LucideIconKind.NotebookPen, 19),
                 _brandText
             }
         };
@@ -402,6 +417,11 @@ public sealed class MainWindow : Window, IDisposable
 
     private Grid BuildEditorArea()
     {
+        _textColorButton = CreateIconButton(LucideIconKind.Palette, "Text color");
+        _textColorButton.Focusable = false;
+        AttachTextColorMenu(_textColorButton);
+        UpdateTextColorButton();
+
         var toolbar = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -418,6 +438,7 @@ public sealed class MainWindow : Window, IDisposable
                     LucideIconKind.Highlighter,
                     "Highlight",
                     () => _editor.SetHighlight(_palette.Highlight)),
+                _textColorButton,
                 CreateToolbarSeparator(),
                 CreateFormattingButton(
                     LucideIconKind.TextAlignStart,
@@ -516,6 +537,12 @@ public sealed class MainWindow : Window, IDisposable
                 _autosave.Queue(CreateCurrentSnapshot);
             }
         };
+        _editor.SelectionChanged += (_, _) => SyncTextColorFromCaret();
+        _editor.AddHandler(
+            InputElement.KeyDownEvent,
+            OnEditorKeyDown,
+            RoutingStrategies.Tunnel,
+            handledEventsToo: true);
         _autosave.StatusChanged += status =>
         {
             _saveStatus.Text = status switch
@@ -581,6 +608,7 @@ public sealed class MainWindow : Window, IDisposable
             }
 
             ApplyDocumentTextTheme();
+            SyncTextColorFromCaret();
             _editor.MarkSaved();
             _saveStatus.Text = "Saved";
         }
@@ -674,6 +702,89 @@ public sealed class MainWindow : Window, IDisposable
         AddIconMenuItem(menu, "To-do", "todo", LucideIconKind.ListChecks);
         FlyoutBase.SetAttachedFlyout(button, menu);
         button.Click += (_, _) => FlyoutBase.ShowAttachedFlyout(button);
+    }
+
+    private void AttachTextColorMenu(Button button)
+    {
+        var menu = new MenuFlyout();
+        AddTextColorMenuItem(menu, "Automatic", GetAutomaticTextBrush, isAutomatic: true);
+
+        foreach (var (label, color) in TextColorOptions)
+        {
+            AddTextColorMenuItem(
+                menu,
+                label,
+                () => new SolidColorBrush(Color.Parse(color)));
+        }
+
+        FlyoutBase.SetAttachedFlyout(button, menu);
+        button.Click += (_, _) => FlyoutBase.ShowAttachedFlyout(button);
+    }
+
+    private void AddTextColorMenuItem(
+        MenuFlyout menu,
+        string label,
+        Func<IBrush> getBrush,
+        bool isAutomatic = false)
+    {
+        var brush = getBrush();
+        var item = new MenuItem
+        {
+            Header = label,
+            Icon = new Border
+            {
+                Width = 14,
+                Height = 14,
+                Background = brush,
+                BorderBrush = _palette.Border,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(2)
+            }
+        };
+        item.Click += (_, _) =>
+        {
+            _editor.Focus();
+            _activeTextColor = isAutomatic ? null : getBrush();
+            _editor.SetForeground(GetActiveTextBrush());
+            UpdateTextColorButton();
+        };
+        menu.Items.Add(item);
+    }
+
+    private void OnEditorKeyDown(object? sender, KeyEventArgs eventArgs)
+    {
+        if (eventArgs.Key != Key.Enter || eventArgs.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        {
+            return;
+        }
+
+        var activeTextColor = _activeTextColor;
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            _activeTextColor = activeTextColor;
+            _editor.SetForeground(GetActiveTextBrush());
+            UpdateTextColorButton();
+        });
+    }
+
+    private void SyncTextColorFromCaret()
+    {
+        var foreground = _editor.GetCaretFormat().Foreground;
+        _activeTextColor = UsesAutomaticTextColor(foreground) ? null : foreground;
+        UpdateTextColorButton();
+    }
+
+    private IBrush GetActiveTextBrush()
+    {
+        return _activeTextColor ?? GetAutomaticTextBrush();
+    }
+
+    private void UpdateTextColorButton()
+    {
+        if (_textColorButton is not null)
+        {
+            _textColorButton.Foreground = GetActiveTextBrush();
+        }
     }
 
     private void AddIconMenuItem(
@@ -803,6 +914,7 @@ public sealed class MainWindow : Window, IDisposable
         _editor.CaretBrush = _palette.PrimaryText;
         _editor.SelectionBrush = _palette.Selection;
         ApplyDocumentTextTheme();
+        UpdateTextColorButton();
         ApplyWindowState();
     }
 
@@ -856,7 +968,10 @@ public sealed class MainWindow : Window, IDisposable
             {
                 if (inline is AvaloniaRichEditor.Documents.Run run)
                 {
-                    run.Foreground = _palette.PrimaryText;
+                    if (UsesAutomaticTextColor(run.Foreground))
+                    {
+                        run.Foreground = GetAutomaticTextBrush();
+                    }
                 }
                 else if (inline is InlineTable inlineTable)
                 {
@@ -868,6 +983,25 @@ public sealed class MainWindow : Window, IDisposable
         {
             ApplyTableTextTheme(table);
         }
+    }
+
+    private IBrush GetAutomaticTextBrush()
+    {
+        return ActualThemeVariant == ThemeVariant.Dark
+            ? Brushes.White
+            : _palette.PrimaryText;
+    }
+
+    private static bool UsesAutomaticTextColor(IBrush? brush)
+    {
+        if (brush is not SolidColorBrush solidColorBrush)
+        {
+            return brush is null;
+        }
+
+        return solidColorBrush.Color == Color.Parse("#202020") ||
+         solidColorBrush.Color == Color.Parse("#F6F5F4") ||
+         solidColorBrush.Color == Colors.White;
     }
 
     private void ApplyTableTextTheme(TableBlock table)
