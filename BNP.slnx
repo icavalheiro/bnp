@@ -1,0 +1,6 @@
+<Solution>
+    <Project Path="src/Bnp.Core/Bnp.Core.csproj" />
+    <Project Path="src/Bnp.App/Bnp.App.csproj" />
+    <Project Path="tests/Bnp.Tests/Bnp.Tests.csproj" />
+    <Project Path="tools/Bnp.StartupBench/Bnp.StartupBench.csproj" />
+</Solution>

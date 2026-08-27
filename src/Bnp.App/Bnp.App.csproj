@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>WinExe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <RootNamespace>Bnp</RootNamespace>
+        <AssemblyName>BNP</AssemblyName>
+        <IsAotCompatible>true</IsAotCompatible>
+        <PublishAot>true</PublishAot>
+        <PublishSelfContained>true</PublishSelfContained>
+        <PublishSingleFile>true</PublishSingleFile>
+        <UseCurrentRuntimeIdentifier>true</UseCurrentRuntimeIdentifier>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Bnp.Core\Bnp.Core.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Avalonia.Desktop" />
+        <PackageReference Include="Avalonia.Themes.Fluent" />
+        <PackageReference Include="AvaloniaRichEditor" />
+        <PackageReference Include="Lucide.Avalonia" />
+        <PackageReference Include="Microsoft.Data.Sqlite" />
+    </ItemGroup>
+</Project>

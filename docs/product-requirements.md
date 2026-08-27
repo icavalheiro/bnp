@@ -1,10 +1,10 @@
-# Better Notepad — Product Requirements
+# BNP (Better Notepad) — Product Requirements
 
 ## 1. Objective and scope
 
 ### 1.1 Product vision
 
-Better Notepad is a fast, cross-platform desktop editor that combines the immediacy of a native notepad application with persistent vertical tabs, structured rich content, optional cloud synchronization, and file-like documents stored internally by the application.
+BNP (Better Notepad) is a fast, cross-platform desktop editor that combines the immediacy of a native notepad application with persistent vertical tabs, structured rich content, optional cloud synchronization, and file-like documents stored internally by the application.
 
 The primary target is Linux, especially Fedora. Windows must also be supported unless the project is explicitly reduced to a single-platform release.
 
@@ -119,6 +119,7 @@ As a keyboard user, I want to create, select, format, search, and save documents
 - Given an existing local library, when the user launches the application, then the application displays an interactive editor and the most recently active document without waiting for cloud synchronization.
 - Startup does not require network access or authentication.
 - Cloud synchronization and nonessential indexing run after the first usable render.
+- Each supported startup scenario targets p95 at or below 200 ms from operating-system process start until the editor accepts input and the requested or most recently active document content is visible.
 - Performance is measured using defined reference hardware and a representative library; targets are listed under non-functional requirements.
 
 ### AC-02 — Vertical tabs
@@ -347,20 +348,23 @@ The exact canonical editor model and interchange schema remain open decisions.
 
 ### 8.1 Performance
 
-Final thresholds require reference hardware, cold/warm definitions, and a representative data set. Proposed release targets are:
+Startup performance is a primary product constraint. Every supported launch scenario targets p95 at or below 200 ms on the agreed reference hardware and representative data sets.
 
-| Metric                                                  | Proposed target                             |
-| ------------------------------------------------------- | ------------------------------------------- |
-| Warm launch to interactive editor                       | p95 ≤ 250 ms                                |
-| Cold launch to interactive editor                       | p95 ≤ 800 ms                                |
-| First local document content visible after shell render | p95 ≤ 100 ms                                |
-| Local save acknowledgement for a typical edit           | p95 ≤ 50 ms after save debounce begins      |
-| Switch between already loaded documents                 | p95 ≤ 50 ms                                 |
-| Switch to a nonloaded text-centric document             | p95 ≤ 150 ms                                |
-| Search feedback after typing                            | begins within 100 ms without blocking input |
-| Typing responsiveness                                   | no visible input stalls during save or sync |
+| Metric                                                   | Proposed target                             |
+| -------------------------------------------------------- | ------------------------------------------- |
+| Warm launch to interactive editor and visible content    | p95 ≤ 200 ms                                |
+| Cold launch to interactive editor and visible content    | p95 ≤ 200 ms                                |
+| First launch with an empty library                       | p95 ≤ 200 ms                                |
+| Launch from a document desktop shortcut                  | p95 ≤ 200 ms                                |
+| Offline launch with cloud accounts configured            | p95 ≤ 200 ms                                |
+| Launch with the maximum supported representative library | p95 ≤ 200 ms                                |
+| Local save acknowledgement for a typical edit            | p95 ≤ 50 ms after save debounce begins      |
+| Switch between already loaded documents                  | p95 ≤ 50 ms                                 |
+| Switch to a nonloaded text-centric document              | p95 ≤ 150 ms                                |
+| Search feedback after typing                             | begins within 100 ms without blocking input |
+| Typing responsiveness                                    | no visible input stalls during save or sync |
 
-A “typical” document and maximum supported document size must be defined. Startup measurements must exclude cloud completion and include production builds with telemetry disabled or controlled consistently.
+Startup time is measured from the operating system's process-start timestamp until the application window accepts editing input and the requested or most recently active local document content is visible. Each scenario is measured independently in production builds. Cloud completion, deferred indexing, and other nonessential background work are excluded, but their scheduling must not delay first interaction. A “typical” document, the maximum supported document and library sizes, cold-cache conditions, reference hardware, sample size, and allowed background system load must be defined before performance acceptance.
 
 ### 8.2 Reliability and data integrity
 
@@ -430,16 +434,16 @@ A short technical spike should compare production-like prototypes rather than �
 
 ### 9.3 Key risks
 
-| Risk                                                   | Impact                                          | Mitigation or decision needed                                                             |
-| ------------------------------------------------------ | ----------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| “Virtually zero” startup is undefined                  | Performance cannot be accepted objectively      | Agree reference hardware, scenarios, percentiles, and targets                             |
-| Rich-text editor capability differs by framework       | Core features may require expensive custom work | Prototype formatting, tables, images, IME, accessibility, and serialization first         |
-| Single SQLite library and cloud sync can diverge       | Data loss or difficult conflicts                | Use immutable IDs, revisions, checksums, explicit conflict states, and fault tests        |
-| Binary assets increase database and sync cost          | Slow backup, startup, and database growth       | Benchmark BLOB storage versus managed asset files before deciding                         |
-| Native look conflicts with identical cross-platform UI | Design inconsistency or duplicated UI work      | Define which platform behaviors are adaptive and which brand elements remain shared       |
-| Desktop shortcut behavior varies by packaging          | Feature may fail in sandboxed installs          | Test early with selected Flatpak/RPM/MSIX distribution models                             |
-| Remote LLM use can expose private text                 | Privacy and compliance risk                     | Opt-in provider configuration, explicit send/review flow, minimal context, secure secrets |
-| YAML import can enable unsafe parsing                  | Code execution or resource exhaustion           | Use safe schema-bound parsing, strict limits, and a package staging area                  |
+| Risk                                                                    | Impact                                                | Mitigation or decision needed                                                                        |
+| ----------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| The 200 ms startup target may constrain toolkit and rich-editor choices | The selected stack may miss a defining product target | Treat startup as an architecture gate and benchmark production-like prototypes on reference hardware |
+| Rich-text editor capability differs by framework                        | Core features may require expensive custom work       | Prototype formatting, tables, images, IME, accessibility, and serialization first                    |
+| Single SQLite library and cloud sync can diverge                        | Data loss or difficult conflicts                      | Use immutable IDs, revisions, checksums, explicit conflict states, and fault tests                   |
+| Binary assets increase database and sync cost                           | Slow backup, startup, and database growth             | Benchmark BLOB storage versus managed asset files before deciding                                    |
+| Native look conflicts with identical cross-platform UI                  | Design inconsistency or duplicated UI work            | Define which platform behaviors are adaptive and which brand elements remain shared                  |
+| Desktop shortcut behavior varies by packaging                           | Feature may fail in sandboxed installs                | Test early with selected Flatpak/RPM/MSIX distribution models                                        |
+| Remote LLM use can expose private text                                  | Privacy and compliance risk                           | Opt-in provider configuration, explicit send/review flow, minimal context, secure secrets            |
+| YAML import can enable unsafe parsing                                   | Code execution or resource exhaustion                 | Use safe schema-bound parsing, strict limits, and a package staging area                             |
 
 ### 9.4 Expected architectural boundaries
 
@@ -480,6 +484,7 @@ This separation is a requirement for testability and platform support, not a man
 18. Are plugins or third-party extensions a future requirement?
 19. What are the reference hardware and representative library/document sizes for performance acceptance?
 20. Is automatic application updating required, and through which distribution channels?
+21. Must the 200 ms startup target include exceptional work such as database schema migration, crash recovery, database repair, and operating-system security scanning, or may those flows show an immediate usable shell and complete recovery work afterward?
 
 ### 10.2 Recorded assumptions
 

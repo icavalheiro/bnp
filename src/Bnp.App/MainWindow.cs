@@ -1,0 +1,820 @@
+using Avalonia;
+using Avalonia.Automation;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Styling;
+using AvaloniaRichEditor.Controls;
+using AvaloniaRichEditor.Documents;
+using Bnp.Core.Documents;
+using Bnp.Diagnostics;
+using Bnp.Presentation;
+using Bnp.Services;
+using Lucide.Avalonia;
+
+namespace Bnp;
+
+public sealed class MainWindow : Window, IDisposable
+{
+    private readonly IDocumentRepository _repository;
+    private readonly AutosaveCoordinator _autosave;
+    private readonly List<DocumentSummary> _documents;
+    private readonly ListBox _documentList = new();
+    private readonly RichEditor _editor = new();
+    private readonly TextBox _titleEditor = new();
+    private readonly TextBlock _saveStatus = new();
+    private readonly Border _sidebar = new();
+    private readonly ColumnDefinition _sidebarColumn = new();
+    private readonly Grid _rootLayout = new();
+    private readonly Border _headerBorder = new();
+    private readonly Border _toolbarBorder = new();
+    private readonly ScrollViewer _editorSurface = new();
+    private readonly Border _statusBorder = new();
+    private readonly TextBlock _sidebarTitle = new();
+    private readonly TextBlock _brandText = new();
+    private readonly Button _minimizeButton = new();
+    private readonly Button _maximizeButton = new();
+    private readonly Button _closeButton = new();
+    private readonly List<Control> _resizeZones = new();
+    private DocumentRecord _currentDocument;
+    private BnpPalette _palette = BnpTheme.GetPalette(ThemeVariant.Light);
+    private bool _isLayoutReady;
+    private bool _isLoadingDocument;
+    private bool _isSidebarCollapsed;
+
+    public MainWindow(IDocumentRepository repository, WorkspaceSnapshot workspace)
+    {
+        _repository = repository;
+        _documents = workspace.Documents.ToList();
+        _currentDocument = workspace.ActiveDocument;
+        _isSidebarCollapsed = workspace.IsSidebarCollapsed;
+        _autosave = new AutosaveCoordinator(repository, TimeSpan.FromMilliseconds(350));
+
+        Title = "BNP";
+        Width = 1100;
+        Height = 720;
+        MinWidth = 720;
+        MinHeight = 480;
+        WindowDecorations = WindowDecorations.None;
+        CanResize = true;
+        CanMinimize = true;
+        CanMaximize = true;
+        BorderThickness = new Thickness(1);
+
+        ConfigureEditor();
+        Content = BuildLayout();
+        _isLayoutReady = true;
+        ApplyTheme();
+        PopulateDocumentList();
+        LoadDocument(_currentDocument);
+        AttachEvents();
+        Opened += OnWindowOpened;
+    }
+
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        CommitTitle();
+        Dispose();
+        base.OnClosing(e);
+    }
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (!_isLayoutReady)
+        {
+            return;
+        }
+
+        if (change.Property == ActualThemeVariantProperty)
+        {
+            ApplyTheme();
+        }
+        else if (change.Property == WindowStateProperty)
+        {
+            ApplyWindowState();
+        }
+    }
+
+    public void Dispose()
+    {
+        _autosave.Dispose();
+    }
+
+    private void OnWindowOpened(object? sender, EventArgs eventArgs)
+    {
+        Opened -= OnWindowOpened;
+        ApplyTheme();
+        Avalonia.Threading.Dispatcher.UIThread.Post(StartupMetrics.MarkReady, Avalonia.Threading.DispatcherPriority.Render);
+    }
+
+    private void ConfigureEditor()
+    {
+        _editor.AllowImages = false;
+        _editor.AllowTables = false;
+        _editor.AllowLocalFileImages = false;
+        _editor.AllowRemoteImagesOnPaste = false;
+        _editor.DefaultFontSize = 12;
+        AutomationProperties.SetName(_editor, "Document editor");
+    }
+
+    private Grid BuildLayout()
+    {
+        _sidebarColumn.Width = _isSidebarCollapsed ? new GridLength(0) : new GridLength(252);
+
+        _rootLayout.ColumnDefinitions = new ColumnDefinitions { _sidebarColumn, new(GridLength.Star) };
+        _rootLayout.RowDefinitions = new RowDefinitions("Auto,*,Auto");
+
+        var header = BuildHeader();
+        Grid.SetColumnSpan(header, 2);
+
+        _sidebar.Child = BuildSidebar();
+        _sidebar.IsVisible = !_isSidebarCollapsed;
+        _sidebar.BorderThickness = new Thickness(0, 0, 1, 0);
+        _sidebar.BorderBrush = Brushes.Gray;
+        Grid.SetRow(_sidebar, 1);
+
+        var editorArea = BuildEditorArea();
+        Grid.SetColumn(editorArea, 1);
+        Grid.SetRow(editorArea, 1);
+
+        var status = BuildStatusBar();
+        Grid.SetColumnSpan(status, 2);
+        Grid.SetRow(status, 2);
+
+        _rootLayout.Children.Add(header);
+        _rootLayout.Children.Add(_sidebar);
+        _rootLayout.Children.Add(editorArea);
+        _rootLayout.Children.Add(status);
+        AddResizeZones();
+        return _rootLayout;
+    }
+
+    private Border BuildHeader()
+    {
+        var collapseButton = CreateIconButton(
+            _isSidebarCollapsed ? LucideIconKind.PanelLeftOpen : LucideIconKind.PanelLeftClose,
+            "Toggle document sidebar");
+        collapseButton.Click += (_, _) =>
+        {
+            _isSidebarCollapsed = !_isSidebarCollapsed;
+            _sidebar.IsVisible = !_isSidebarCollapsed;
+            _sidebarColumn.Width = _isSidebarCollapsed ? new GridLength(0) : new GridLength(252);
+            collapseButton.Content = BnpIcons.Create(
+                _isSidebarCollapsed ? LucideIconKind.PanelLeftOpen : LucideIconKind.PanelLeftClose);
+            _repository.SetSidebarCollapsed(_isSidebarCollapsed);
+        };
+
+        _titleEditor.Width = 360;
+        _titleEditor.MinWidth = 180;
+        _titleEditor.MaxWidth = 480;
+        _titleEditor.HorizontalAlignment = HorizontalAlignment.Center;
+        _titleEditor.TextAlignment = TextAlignment.Center;
+        _titleEditor.FontSize = 14;
+        _titleEditor.FontWeight = FontWeight.SemiBold;
+        _titleEditor.Padding = new Thickness(8, 4);
+        _titleEditor.BorderThickness = new Thickness(0);
+        AutomationProperties.SetName(_titleEditor, "Document title");
+
+        _brandText.Text = "BNP";
+        _brandText.FontSize = 14;
+        _brandText.FontWeight = FontWeight.SemiBold;
+        _brandText.VerticalAlignment = VerticalAlignment.Center;
+
+        var brand = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 9,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children =
+            {
+                collapseButton,
+                BnpIcons.Create(LucideIconKind.NotebookPen, 19),
+                _brandText
+            }
+        };
+        var captionButtons = BuildCaptionButtons();
+        var headerLayout = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto,*"),
+            Background = Brushes.Transparent,
+            Children = { brand, _titleEditor, captionButtons }
+        };
+        Grid.SetColumn(_titleEditor, 1);
+        Grid.SetColumn(captionButtons, 2);
+        headerLayout.PointerPressed += OnTitleBarPointerPressed;
+
+        _headerBorder.MinHeight = 44;
+        _headerBorder.Padding = new Thickness(8, 0, 0, 0);
+        _headerBorder.BorderThickness = new Thickness(0, 0, 0, 1);
+        _headerBorder.Child = headerLayout;
+        return _headerBorder;
+    }
+
+    private StackPanel BuildCaptionButtons()
+    {
+        ConfigureCaptionButton(_minimizeButton, LucideIconKind.Minus, "Minimize window");
+        _minimizeButton.Click += (_, _) => WindowState = WindowState.Minimized;
+
+        ConfigureCaptionButton(_maximizeButton, LucideIconKind.Maximize2, "Maximize window");
+        _maximizeButton.Click += (_, _) => ToggleMaximize();
+
+        ConfigureCaptionButton(_closeButton, LucideIconKind.X, "Close window");
+        _closeButton.Click += (_, _) => Close();
+        _closeButton.PointerEntered += (_, _) =>
+        {
+            _closeButton.Background = new SolidColorBrush(Color.Parse("#C42B1C"));
+            _closeButton.Foreground = Brushes.White;
+        };
+        _closeButton.PointerExited += (_, _) =>
+        {
+            _closeButton.Background = Brushes.Transparent;
+            _closeButton.Foreground = _palette.PrimaryText;
+        };
+
+        return new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Children = { _minimizeButton, _maximizeButton, _closeButton }
+        };
+    }
+
+    private void ConfigureCaptionButton(Button button, LucideIconKind icon, string accessibleName)
+    {
+        button.Content = BnpIcons.Create(icon, 16);
+        button.Width = 46;
+        button.MinHeight = 43;
+        button.Padding = new Thickness(0);
+        button.Focusable = false;
+        button.Background = Brushes.Transparent;
+        button.BorderBrush = Brushes.Transparent;
+        button.BorderThickness = new Thickness(0);
+        button.CornerRadius = new CornerRadius(0);
+        button.HorizontalContentAlignment = HorizontalAlignment.Center;
+        button.VerticalContentAlignment = VerticalAlignment.Center;
+        button.PointerEntered += (_, _) => button.Background = _palette.ButtonHover;
+        button.PointerExited += (_, _) => button.Background = Brushes.Transparent;
+        ToolTip.SetTip(button, accessibleName);
+        AutomationProperties.SetName(button, accessibleName);
+    }
+
+    private void OnTitleBarPointerPressed(object? sender, PointerPressedEventArgs eventArgs)
+    {
+        if (!eventArgs.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        if (eventArgs.ClickCount == 2 && CanMaximize)
+        {
+            ToggleMaximize();
+            eventArgs.Handled = true;
+            return;
+        }
+
+        BeginMoveDrag(eventArgs);
+        eventArgs.Handled = true;
+    }
+
+    private void ToggleMaximize()
+    {
+        WindowState = WindowState == WindowState.Maximized
+            ? WindowState.Normal
+            : WindowState.Maximized;
+    }
+
+    private void AddResizeZones()
+    {
+        AddResizeZone(WindowEdge.North, horizontalAlignment: HorizontalAlignment.Stretch,
+            verticalAlignment: VerticalAlignment.Top, height: 6);
+        AddResizeZone(WindowEdge.South, horizontalAlignment: HorizontalAlignment.Stretch,
+            verticalAlignment: VerticalAlignment.Bottom, height: 6);
+        AddResizeZone(WindowEdge.West, horizontalAlignment: HorizontalAlignment.Left,
+            verticalAlignment: VerticalAlignment.Stretch, width: 6);
+        AddResizeZone(WindowEdge.East, horizontalAlignment: HorizontalAlignment.Right,
+            verticalAlignment: VerticalAlignment.Stretch, width: 6);
+        AddResizeZone(WindowEdge.NorthWest, HorizontalAlignment.Left, VerticalAlignment.Top, 10, 10);
+        AddResizeZone(WindowEdge.NorthEast, HorizontalAlignment.Right, VerticalAlignment.Top, 10, 10);
+        AddResizeZone(WindowEdge.SouthWest, HorizontalAlignment.Left, VerticalAlignment.Bottom, 10, 10);
+        AddResizeZone(WindowEdge.SouthEast, HorizontalAlignment.Right, VerticalAlignment.Bottom, 10, 10);
+    }
+
+    private void AddResizeZone(
+        WindowEdge edge,
+        HorizontalAlignment horizontalAlignment,
+        VerticalAlignment verticalAlignment,
+        double width = double.NaN,
+        double height = double.NaN)
+    {
+        var zone = new Border
+        {
+            Width = width,
+            Height = height,
+            Background = Brushes.Transparent,
+            HorizontalAlignment = horizontalAlignment,
+            VerticalAlignment = verticalAlignment,
+            ZIndex = 1000
+        };
+        zone.PointerPressed += (_, eventArgs) =>
+        {
+            if (WindowState == WindowState.Normal &&
+                eventArgs.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+            {
+                BeginResizeDrag(edge, eventArgs);
+                eventArgs.Handled = true;
+            }
+        };
+        Grid.SetColumnSpan(zone, 2);
+        Grid.SetRowSpan(zone, 3);
+        _rootLayout.Children.Add(zone);
+        _resizeZones.Add(zone);
+    }
+
+    private Grid BuildSidebar()
+    {
+        var addButton = CreateIconButton(LucideIconKind.Plus, "New document");
+        addButton.Click += (_, _) => CreateDocument();
+
+        var iconButton = CreateIconButton(LucideIconKind.Palette, "Choose document icon");
+        AttachIconMenu(iconButton);
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            Children = { iconButton, addButton }
+        };
+        _sidebarTitle.Text = "Documents";
+        _sidebarTitle.FontSize = 12;
+        _sidebarTitle.FontWeight = FontWeight.SemiBold;
+        _sidebarTitle.VerticalAlignment = VerticalAlignment.Center;
+
+        var sidebarHeader = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            Margin = new Thickness(10, 8, 8, 6),
+            Children = { _sidebarTitle, actions }
+        };
+        Grid.SetColumn(actions, 1);
+
+        _documentList.HorizontalAlignment = HorizontalAlignment.Stretch;
+        _documentList.Background = Brushes.Transparent;
+        _documentList.BorderThickness = new Thickness(0);
+        _documentList.Padding = new Thickness(0, 3, 0, 8);
+        AutomationProperties.SetName(_documentList, "Open documents");
+
+        var sidebarLayout = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,*"),
+            Children = { sidebarHeader, _documentList }
+        };
+        Grid.SetRow(_documentList, 1);
+        return sidebarLayout;
+    }
+
+    private Border BuildStatusBar()
+    {
+        _saveStatus.Text = "Saved";
+        _saveStatus.HorizontalAlignment = HorizontalAlignment.Right;
+
+        _saveStatus.FontSize = 12;
+        _statusBorder.MinHeight = 26;
+        _statusBorder.Padding = new Thickness(12, 4);
+        _statusBorder.BorderThickness = new Thickness(0, 1, 0, 0);
+        _statusBorder.Child = _saveStatus;
+        return _statusBorder;
+    }
+
+    private Grid BuildEditorArea()
+    {
+        var toolbar = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 3,
+            Margin = new Thickness(10, 5),
+            Children =
+            {
+                CreateFormattingButton(LucideIconKind.Undo2, "Undo", _editor.Undo),
+                CreateFormattingButton(LucideIconKind.Redo2, "Redo", _editor.Redo),
+                CreateToolbarSeparator(),
+                CreateFormattingButton(LucideIconKind.Bold, "Bold", _editor.ToggleBold),
+                CreateFormattingButton(LucideIconKind.Italic, "Italic", _editor.ToggleItalic),
+                CreateFormattingButton(
+                    LucideIconKind.Highlighter,
+                    "Highlight",
+                    () => _editor.SetHighlight(_palette.Highlight)),
+                CreateToolbarSeparator(),
+                CreateFormattingButton(
+                    LucideIconKind.TextAlignStart,
+                    "Align left",
+                    () => _editor.SetTextAlignment(TextAlignment.Left)),
+                CreateFormattingButton(
+                    LucideIconKind.TextAlignCenter,
+                    "Align center",
+                    () => _editor.SetTextAlignment(TextAlignment.Center)),
+                CreateFormattingButton(
+                    LucideIconKind.TextAlignEnd,
+                    "Align right",
+                    () => _editor.SetTextAlignment(TextAlignment.Right))
+            }
+        };
+
+        _toolbarBorder.MinHeight = 43;
+        _toolbarBorder.BorderThickness = new Thickness(0, 0, 0, 1);
+        _toolbarBorder.Child = toolbar;
+        _editorSurface.Content = _editor;
+        _editorSurface.Padding = new Thickness(32, 24);
+        _editorSurface.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+        _editorSurface.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+
+        var editorArea = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,*"),
+            Children = { _toolbarBorder, _editorSurface }
+        };
+        Grid.SetRow(_editorSurface, 1);
+        return editorArea;
+    }
+
+    private void PopulateDocumentList()
+    {
+        _documentList.Items.Clear();
+        ListBoxItem? activeItem = null;
+
+        foreach (var document in _documents.OrderBy(document => document.TabOrder))
+        {
+            var item = CreateDocumentListItem(document);
+            _documentList.Items.Add(item);
+            if (document.Id == _currentDocument.Id)
+            {
+                activeItem = item;
+            }
+        }
+
+        _documentList.SelectedItem = activeItem;
+    }
+
+    private static ListBoxItem CreateDocumentListItem(DocumentSummary document)
+    {
+        return new ListBoxItem
+        {
+            Tag = document.Id,
+            MinHeight = 38,
+            Margin = new Thickness(6, 2),
+            Padding = new Thickness(8, 6),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 9,
+                Children =
+                {
+                    BnpIcons.CreateDocumentIcon(document.IconKey),
+                    new TextBlock
+                    {
+                        Text = document.Title,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        VerticalAlignment = VerticalAlignment.Center
+                    }
+                }
+            }
+        };
+    }
+
+    private void AttachEvents()
+    {
+        _editor.TextChanged += (_, _) =>
+        {
+            if (!_isLoadingDocument)
+            {
+                _autosave.Queue(CreateCurrentSnapshot);
+            }
+        };
+        _autosave.StatusChanged += status =>
+        {
+            _saveStatus.Text = status switch
+            {
+                SaveStatus.Unsaved => "Unsaved",
+                SaveStatus.Saving => "Saving...",
+                SaveStatus.Failed => "Save failed",
+                _ => "Saved"
+            };
+        };
+        _documentList.SelectionChanged += (_, _) => SwitchToSelectedDocument();
+        _titleEditor.LostFocus += (_, _) => CommitTitle();
+        KeyDown += OnWindowKeyDown;
+    }
+
+    private void CreateDocument()
+    {
+        CommitTitle();
+        _autosave.Flush();
+
+        var document = _repository.CreateDocument($"Untitled {_documents.Count + 1}");
+        _documents.Add(ToSummary(document));
+        var item = CreateDocumentListItem(ToSummary(document));
+        _documentList.Items.Add(item);
+        _documentList.SelectedItem = item;
+    }
+
+    private void SwitchToSelectedDocument()
+    {
+        if (_documentList.SelectedItem is not ListBoxItem { Tag: Guid documentId } ||
+            documentId == _currentDocument.Id)
+        {
+            return;
+        }
+
+        CommitTitle();
+        _autosave.Flush();
+        var document = _repository.GetDocument(documentId);
+        if (document is null)
+        {
+            _saveStatus.Text = "Document unavailable";
+            return;
+        }
+
+        _repository.SetActiveDocument(documentId);
+        LoadDocument(document);
+    }
+
+    private void LoadDocument(DocumentRecord document)
+    {
+        _isLoadingDocument = true;
+        try
+        {
+            _currentDocument = document;
+            _titleEditor.Text = document.Title;
+
+            if (document.ContentFormat == DocumentFormats.AvaloniaRichEditorJsonV1)
+            {
+                _editor.LoadJson(document.Content);
+            }
+            else
+            {
+                _editor.Clear();
+                _editor.InsertText(document.Content);
+            }
+
+            ApplyDocumentTextTheme();
+            _editor.MarkSaved();
+            _saveStatus.Text = "Saved";
+        }
+        finally
+        {
+            _isLoadingDocument = false;
+        }
+    }
+
+    private DocumentRecord CreateCurrentSnapshot()
+    {
+        _currentDocument = _currentDocument with
+        {
+            ContentFormat = DocumentFormats.AvaloniaRichEditorJsonV1,
+            Content = _editor.ToJson(),
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        return _currentDocument;
+    }
+
+    private void CommitTitle()
+    {
+        var title = _titleEditor.Text?.Trim();
+        if (string.IsNullOrEmpty(title) || title == _currentDocument.Title)
+        {
+            _titleEditor.Text = _currentDocument.Title;
+            return;
+        }
+
+        _currentDocument = _currentDocument with { Title = title };
+        ReplaceCurrentSummary();
+        _autosave.Queue(CreateCurrentSnapshot);
+    }
+
+    private void AttachIconMenu(Button button)
+    {
+        var menu = new MenuFlyout();
+        AddIconMenuItem(menu, "Document", "file-text", LucideIconKind.FileText);
+        AddIconMenuItem(menu, "Notebook", "notebook", LucideIconKind.NotebookTabs);
+        AddIconMenuItem(menu, "Idea", "idea", LucideIconKind.Lightbulb);
+        AddIconMenuItem(menu, "Favorite", "favorite", LucideIconKind.Star);
+        AddIconMenuItem(menu, "To-do", "todo", LucideIconKind.ListChecks);
+        FlyoutBase.SetAttachedFlyout(button, menu);
+        button.Click += (_, _) => FlyoutBase.ShowAttachedFlyout(button);
+    }
+
+    private void AddIconMenuItem(
+        MenuFlyout menu,
+        string label,
+        string iconKey,
+        LucideIconKind iconKind)
+    {
+        var item = new MenuItem
+        {
+            Header = label,
+            Icon = BnpIcons.Create(iconKind, 16)
+        };
+        item.Click += (_, _) => SetCurrentDocumentIcon(iconKey);
+        menu.Items.Add(item);
+    }
+
+    private void SetCurrentDocumentIcon(string iconKey)
+    {
+        if (_currentDocument.IconKey == iconKey)
+        {
+            return;
+        }
+
+        _currentDocument = _currentDocument with { IconKey = iconKey };
+        ReplaceCurrentSummary();
+        _autosave.Queue(CreateCurrentSnapshot);
+    }
+
+    private void ReplaceCurrentSummary()
+    {
+        var index = _documents.FindIndex(document => document.Id == _currentDocument.Id);
+        if (index >= 0)
+        {
+            _documents[index] = ToSummary(_currentDocument);
+        }
+
+        PopulateDocumentList();
+    }
+
+    private void OnWindowKeyDown(object? sender, KeyEventArgs eventArgs)
+    {
+        if (!eventArgs.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            return;
+        }
+
+        if (eventArgs.Key == Key.N)
+        {
+            CreateDocument();
+            eventArgs.Handled = true;
+        }
+        else if (eventArgs.Key == Key.S)
+        {
+            CommitTitle();
+            _autosave.Flush();
+            eventArgs.Handled = true;
+        }
+    }
+
+    private Button CreateIconButton(LucideIconKind icon, string accessibleName)
+    {
+        var button = new Button
+        {
+            Content = BnpIcons.Create(icon),
+            Width = 32,
+            Height = 32,
+            Padding = new Thickness(6),
+            Background = Brushes.Transparent,
+            BorderBrush = Brushes.Transparent,
+            CornerRadius = new CornerRadius(5),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
+        button.PointerEntered += (_, _) => button.Background = _palette.ButtonHover;
+        button.PointerExited += (_, _) => button.Background = Brushes.Transparent;
+        ToolTip.SetTip(button, accessibleName);
+        AutomationProperties.SetName(button, accessibleName);
+        return button;
+    }
+
+    private Button CreateFormattingButton(
+        LucideIconKind icon,
+        string accessibleName,
+        Action action)
+    {
+        var button = CreateIconButton(icon, accessibleName);
+        button.Focusable = false;
+        button.Click += (_, _) => action();
+        return button;
+    }
+
+    private Border CreateToolbarSeparator()
+    {
+        return new Border
+        {
+            Width = 1,
+            Height = 20,
+            Margin = new Thickness(4, 6),
+            Background = _palette.Border,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+    }
+
+    private void ApplyTheme()
+    {
+        _palette = BnpTheme.GetPalette(ActualThemeVariant);
+
+        Background = _palette.Window;
+        Foreground = _palette.PrimaryText;
+        BorderBrush = _palette.Border;
+        _rootLayout.Background = _palette.Window;
+        _headerBorder.Background = _palette.Header;
+        _headerBorder.BorderBrush = _palette.Border;
+        _sidebar.Background = _palette.Sidebar;
+        _sidebar.BorderBrush = _palette.Border;
+        _toolbarBorder.Background = _palette.Toolbar;
+        _toolbarBorder.BorderBrush = _palette.Border;
+        _editorSurface.Background = _palette.Editor;
+        _statusBorder.Background = _palette.Status;
+        _statusBorder.BorderBrush = _palette.Border;
+        _titleEditor.Background = Brushes.Transparent;
+        _titleEditor.Foreground = _palette.PrimaryText;
+        _documentList.Foreground = _palette.PrimaryText;
+        _saveStatus.Foreground = _palette.SecondaryText;
+        _minimizeButton.Foreground = _palette.PrimaryText;
+        _maximizeButton.Foreground = _palette.PrimaryText;
+        _closeButton.Foreground = _palette.PrimaryText;
+        _editor.CaretBrush = _palette.PrimaryText;
+        _editor.SelectionBrush = _palette.Selection;
+        ApplyDocumentTextTheme();
+        ApplyWindowState();
+    }
+
+    private void ApplyWindowState()
+    {
+        var isMaximized = WindowState == WindowState.Maximized;
+        _maximizeButton.Content = BnpIcons.Create(
+            isMaximized ? LucideIconKind.Copy : LucideIconKind.Maximize2,
+            16);
+
+        var maximizeLabel = isMaximized ? "Restore window" : "Maximize window";
+        ToolTip.SetTip(_maximizeButton, maximizeLabel);
+        AutomationProperties.SetName(_maximizeButton, maximizeLabel);
+        BorderThickness = isMaximized ? new Thickness(0) : new Thickness(1);
+
+        foreach (var zone in _resizeZones)
+        {
+            zone.IsVisible = !isMaximized;
+        }
+    }
+
+    private void ApplyDocumentTextTheme()
+    {
+        if (_editor.Document is not { } document)
+        {
+            return;
+        }
+
+        foreach (var block in document.Blocks)
+        {
+            ApplyBlockTextTheme(block);
+        }
+
+        _editor.InvalidateVisual();
+    }
+
+    private void ApplyBlockTextTheme(Block block)
+    {
+        if (block is Paragraph paragraph)
+        {
+            foreach (var inline in paragraph.Inlines)
+            {
+                if (inline is AvaloniaRichEditor.Documents.Run run)
+                {
+                    run.Foreground = _palette.PrimaryText;
+                }
+                else if (inline is InlineTable inlineTable)
+                {
+                    ApplyTableTextTheme(inlineTable.Table);
+                }
+            }
+        }
+        else if (block is TableBlock table)
+        {
+            ApplyTableTextTheme(table);
+        }
+    }
+
+    private void ApplyTableTextTheme(TableBlock table)
+    {
+        foreach (var row in table.Cells)
+        {
+            foreach (var cell in row)
+            {
+                foreach (var block in cell.Blocks)
+                {
+                    ApplyBlockTextTheme(block);
+                }
+            }
+        }
+    }
+
+    private static DocumentSummary ToSummary(DocumentRecord document)
+    {
+        return new DocumentSummary(
+            document.Id,
+            document.Title,
+            document.IconKey,
+            document.TabOrder,
+            document.UpdatedAt);
+    }
+}
