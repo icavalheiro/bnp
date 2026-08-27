@@ -23,7 +23,7 @@ public sealed class MainWindow : Window, IDisposable
     private readonly List<DocumentSummary> _documents;
     private readonly ListBox _documentList = new();
     private readonly RichEditor _editor = new();
-    private readonly TextBox _titleEditor = new();
+    private readonly TextBlock _titleDisplay = new();
     private readonly TextBlock _saveStatus = new();
     private readonly Border _sidebar = new();
     private readonly ColumnDefinition _sidebarColumn = new();
@@ -62,6 +62,9 @@ public sealed class MainWindow : Window, IDisposable
         CanMinimize = true;
         CanMaximize = true;
         BorderThickness = new Thickness(1);
+        CornerRadius = new CornerRadius(8);
+        ClipToBounds = true;
+        Win32Properties.SetWindowCornerPreference(this, Win32Properties.WindowCornerPreference.RoundSmall);
 
         ConfigureEditor();
         Content = BuildLayout();
@@ -75,7 +78,6 @@ public sealed class MainWindow : Window, IDisposable
 
     protected override void OnClosing(WindowClosingEventArgs e)
     {
-        CommitTitle();
         Dispose();
         base.OnClosing(e);
     }
@@ -167,16 +169,17 @@ public sealed class MainWindow : Window, IDisposable
             _repository.SetSidebarCollapsed(_isSidebarCollapsed);
         };
 
-        _titleEditor.Width = 360;
-        _titleEditor.MinWidth = 180;
-        _titleEditor.MaxWidth = 480;
-        _titleEditor.HorizontalAlignment = HorizontalAlignment.Center;
-        _titleEditor.TextAlignment = TextAlignment.Center;
-        _titleEditor.FontSize = 14;
-        _titleEditor.FontWeight = FontWeight.SemiBold;
-        _titleEditor.Padding = new Thickness(8, 4);
-        _titleEditor.BorderThickness = new Thickness(0);
-        AutomationProperties.SetName(_titleEditor, "Document title");
+        _titleDisplay.Width = 360;
+        _titleDisplay.MinWidth = 180;
+        _titleDisplay.MaxWidth = 480;
+        _titleDisplay.HorizontalAlignment = HorizontalAlignment.Center;
+        _titleDisplay.TextAlignment = TextAlignment.Center;
+        _titleDisplay.TextTrimming = TextTrimming.CharacterEllipsis;
+        _titleDisplay.FontSize = 14;
+        _titleDisplay.FontWeight = FontWeight.SemiBold;
+        _titleDisplay.VerticalAlignment = VerticalAlignment.Center;
+        _titleDisplay.IsHitTestVisible = false;
+        AutomationProperties.SetName(_titleDisplay, "Current document title");
 
         _brandText.Text = "BNP";
         _brandText.FontSize = 14;
@@ -200,9 +203,9 @@ public sealed class MainWindow : Window, IDisposable
         {
             ColumnDefinitions = new ColumnDefinitions("*,Auto,*"),
             Background = Brushes.Transparent,
-            Children = { brand, _titleEditor, captionButtons }
+            Children = { brand, _titleDisplay, captionButtons }
         };
-        Grid.SetColumn(_titleEditor, 1);
+        Grid.SetColumn(_titleDisplay, 1);
         Grid.SetColumn(captionButtons, 2);
         headerLayout.PointerPressed += OnTitleBarPointerPressed;
 
@@ -458,9 +461,21 @@ public sealed class MainWindow : Window, IDisposable
         _documentList.SelectedItem = activeItem;
     }
 
-    private static ListBoxItem CreateDocumentListItem(DocumentSummary document)
+    private ListBoxItem CreateDocumentListItem(DocumentSummary document)
     {
-        return new ListBoxItem
+        var titleEditor = new TextBox
+        {
+            Text = document.Title,
+            Tag = document.Id,
+            Padding = new Thickness(2, 0),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetName(titleEditor, $"Rename {document.Title}");
+
+        var item = new ListBoxItem
         {
             Tag = document.Id,
             MinHeight = 38,
@@ -474,15 +489,14 @@ public sealed class MainWindow : Window, IDisposable
                 Children =
                 {
                     BnpIcons.CreateDocumentIcon(document.IconKey),
-                    new TextBlock
-                    {
-                        Text = document.Title,
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                        VerticalAlignment = VerticalAlignment.Center
-                    }
+                    titleEditor
                 }
             }
         };
+        titleEditor.GotFocus += (_, _) => _documentList.SelectedItem = item;
+        titleEditor.LostFocus += (_, _) => RenameDocument(document.Id, titleEditor);
+        titleEditor.KeyDown += (_, eventArgs) => OnTitleEditorKeyDown(document.Id, titleEditor, eventArgs);
+        return item;
     }
 
     private void AttachEvents()
@@ -505,13 +519,11 @@ public sealed class MainWindow : Window, IDisposable
             };
         };
         _documentList.SelectionChanged += (_, _) => SwitchToSelectedDocument();
-        _titleEditor.LostFocus += (_, _) => CommitTitle();
         KeyDown += OnWindowKeyDown;
     }
 
     private void CreateDocument()
     {
-        CommitTitle();
         _autosave.Flush();
 
         var document = _repository.CreateDocument($"Untitled {_documents.Count + 1}");
@@ -529,7 +541,6 @@ public sealed class MainWindow : Window, IDisposable
             return;
         }
 
-        CommitTitle();
         _autosave.Flush();
         var document = _repository.GetDocument(documentId);
         if (document is null)
@@ -548,7 +559,8 @@ public sealed class MainWindow : Window, IDisposable
         try
         {
             _currentDocument = document;
-            _titleEditor.Text = document.Title;
+            _titleDisplay.Text = document.Title;
+            Title = $"BNP - {document.Title}";
 
             if (document.ContentFormat == DocumentFormats.AvaloniaRichEditorJsonV1)
             {
@@ -581,18 +593,67 @@ public sealed class MainWindow : Window, IDisposable
         return _currentDocument;
     }
 
-    private void CommitTitle()
+    private void RenameDocument(Guid documentId, TextBox titleEditor)
     {
-        var title = _titleEditor.Text?.Trim();
-        if (string.IsNullOrEmpty(title) || title == _currentDocument.Title)
+        var index = _documents.FindIndex(document => document.Id == documentId);
+        if (index < 0)
         {
-            _titleEditor.Text = _currentDocument.Title;
             return;
         }
 
-        _currentDocument = _currentDocument with { Title = title };
-        ReplaceCurrentSummary();
-        _autosave.Queue(CreateCurrentSnapshot);
+        var currentTitle = _documents[index].Title;
+        var title = titleEditor.Text?.Trim();
+        if (string.IsNullOrEmpty(title))
+        {
+            titleEditor.Text = currentTitle;
+            return;
+        }
+
+        if (title == currentTitle)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        _documents[index] = _documents[index] with { Title = title, UpdatedAt = now };
+        titleEditor.Text = title;
+        AutomationProperties.SetName(titleEditor, $"Rename {title}");
+
+        if (documentId == _currentDocument.Id)
+        {
+            _currentDocument = _currentDocument with { Title = title, UpdatedAt = now };
+            _titleDisplay.Text = title;
+            Title = $"BNP - {title}";
+            _autosave.Queue(CreateCurrentSnapshot);
+            return;
+        }
+
+        var document = _repository.GetDocument(documentId);
+        if (document is not null)
+        {
+            _repository.SaveDocument(document with { Title = title, UpdatedAt = now });
+        }
+    }
+
+    private void OnTitleEditorKeyDown(Guid documentId, TextBox titleEditor, KeyEventArgs eventArgs)
+    {
+        if (eventArgs.Key == Key.Enter)
+        {
+            RenameDocument(documentId, titleEditor);
+            _editor.Focus();
+            eventArgs.Handled = true;
+        }
+        else if (eventArgs.Key == Key.Escape)
+        {
+            var document = _documents.Find(document => document.Id == documentId);
+            if (document is not null)
+            {
+                titleEditor.Text = document.Title;
+            }
+
+            _editor.Focus();
+            eventArgs.Handled = true;
+        }
     }
 
     private void AttachIconMenu(Button button)
@@ -659,7 +720,6 @@ public sealed class MainWindow : Window, IDisposable
         }
         else if (eventArgs.Key == Key.S)
         {
-            CommitTitle();
             _autosave.Flush();
             eventArgs.Handled = true;
         }
@@ -726,8 +786,7 @@ public sealed class MainWindow : Window, IDisposable
         _editorSurface.Background = _palette.Editor;
         _statusBorder.Background = _palette.Status;
         _statusBorder.BorderBrush = _palette.Border;
-        _titleEditor.Background = Brushes.Transparent;
-        _titleEditor.Foreground = _palette.PrimaryText;
+        _titleDisplay.Foreground = _palette.PrimaryText;
         _documentList.Foreground = _palette.PrimaryText;
         _saveStatus.Foreground = _palette.SecondaryText;
         _minimizeButton.Foreground = _palette.PrimaryText;
@@ -750,6 +809,13 @@ public sealed class MainWindow : Window, IDisposable
         ToolTip.SetTip(_maximizeButton, maximizeLabel);
         AutomationProperties.SetName(_maximizeButton, maximizeLabel);
         BorderThickness = isMaximized ? new Thickness(0) : new Thickness(1);
+        CornerRadius = isMaximized ? new CornerRadius(0) : new CornerRadius(8);
+        ClipToBounds = !isMaximized;
+        Win32Properties.SetWindowCornerPreference(
+            this,
+            isMaximized
+                ? Win32Properties.WindowCornerPreference.DoNotRound
+                : Win32Properties.WindowCornerPreference.RoundSmall);
 
         foreach (var zone in _resizeZones)
         {
