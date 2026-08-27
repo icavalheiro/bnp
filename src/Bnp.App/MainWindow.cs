@@ -27,6 +27,7 @@ public sealed class MainWindow : Window, IDisposable
     private readonly TextBlock _saveStatus = new();
     private readonly Border _sidebar = new();
     private readonly ColumnDefinition _sidebarColumn = new();
+    private readonly Border _windowFrame = new();
     private readonly Grid _rootLayout = new();
     private readonly Border _headerBorder = new();
     private readonly Border _toolbarBorder = new();
@@ -61,7 +62,9 @@ public sealed class MainWindow : Window, IDisposable
         CanResize = true;
         CanMinimize = true;
         CanMaximize = true;
-        BorderThickness = new Thickness(1);
+        Background = Brushes.Transparent;
+        TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
+        BorderThickness = new Thickness(0);
         CornerRadius = new CornerRadius(8);
         ClipToBounds = true;
         Win32Properties.SetWindowCornerPreference(this, Win32Properties.WindowCornerPreference.RoundSmall);
@@ -122,7 +125,7 @@ public sealed class MainWindow : Window, IDisposable
         AutomationProperties.SetName(_editor, "Document editor");
     }
 
-    private Grid BuildLayout()
+    private Border BuildLayout()
     {
         _sidebarColumn.Width = _isSidebarCollapsed ? new GridLength(0) : new GridLength(252);
 
@@ -151,7 +154,12 @@ public sealed class MainWindow : Window, IDisposable
         _rootLayout.Children.Add(editorArea);
         _rootLayout.Children.Add(status);
         AddResizeZones();
-        return _rootLayout;
+
+        _windowFrame.Child = _rootLayout;
+        _windowFrame.CornerRadius = new CornerRadius(8);
+        _windowFrame.ClipToBounds = true;
+        _windowFrame.BorderThickness = new Thickness(1);
+        return _windowFrame;
     }
 
     private Border BuildHeader()
@@ -773,9 +781,9 @@ public sealed class MainWindow : Window, IDisposable
     {
         _palette = BnpTheme.GetPalette(ActualThemeVariant);
 
-        Background = _palette.Window;
         Foreground = _palette.PrimaryText;
-        BorderBrush = _palette.Border;
+        _windowFrame.Background = _palette.Window;
+        _windowFrame.BorderBrush = _palette.Border;
         _rootLayout.Background = _palette.Window;
         _headerBorder.Background = _palette.Header;
         _headerBorder.BorderBrush = _palette.Border;
@@ -808,7 +816,9 @@ public sealed class MainWindow : Window, IDisposable
         var maximizeLabel = isMaximized ? "Restore window" : "Maximize window";
         ToolTip.SetTip(_maximizeButton, maximizeLabel);
         AutomationProperties.SetName(_maximizeButton, maximizeLabel);
-        BorderThickness = isMaximized ? new Thickness(0) : new Thickness(1);
+        _windowFrame.BorderThickness = isMaximized ? new Thickness(0) : new Thickness(1);
+        _windowFrame.CornerRadius = isMaximized ? new CornerRadius(0) : new CornerRadius(8);
+        _windowFrame.ClipToBounds = !isMaximized;
         CornerRadius = isMaximized ? new CornerRadius(0) : new CornerRadius(8);
         ClipToBounds = !isMaximized;
         Win32Properties.SetWindowCornerPreference(
