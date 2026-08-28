@@ -56,6 +56,15 @@ internal sealed class EditorCopy
     public string French { get; init; } = string.Empty;
     public string English { get; init; } = string.Empty;
     public string Apply { get; init; } = string.Empty;
+    public string CloudBackups { get; init; } = string.Empty;
+    public string CloudService { get; init; } = string.Empty;
+    public string Dropbox { get; init; } = string.Empty;
+    public string ConnectAndBackup { get; init; } = string.Empty;
+    public string Disconnect { get; init; } = string.Empty;
+    public string CloudConnecting { get; init; } = string.Empty;
+    public string CloudConnected { get; init; } = string.Empty;
+    public string CloudDisconnected { get; init; } = string.Empty;
+    public string CloudBackupFailed { get; init; } = string.Empty;
     public Dictionary<string, string> TextColors { get; init; } = [];
     public Dictionary<string, string> DocumentColors { get; init; } = [];
     public Dictionary<string, string> DocumentIcons { get; init; } = [];

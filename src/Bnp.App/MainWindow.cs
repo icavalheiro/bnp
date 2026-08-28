@@ -14,6 +14,7 @@ using Bnp.Diagnostics;
 using Bnp.Localization;
 using Bnp.Presentation;
 using Bnp.Services;
+using Bnp.Services.CloudBackup;
 using Lucide.Avalonia;
 
 namespace Bnp;
@@ -24,6 +25,8 @@ public sealed class MainWindow : Window, IDisposable
 
     private readonly IDocumentRepository _repository;
     private readonly AutosaveCoordinator _autosave;
+    private readonly CloudBackupService _cloudBackupService;
+    private readonly CloudBackupCoordinator _cloudBackupCoordinator;
     private readonly List<DocumentSummary> _documents;
     private readonly ListBox _documentList = new();
     private readonly RichEditor _editor = new();
@@ -48,9 +51,15 @@ public sealed class MainWindow : Window, IDisposable
     private string _themeKey;
     private string _languageKey;
 
-    public MainWindow(IDocumentRepository repository, WorkspaceSnapshot workspace)
+    internal MainWindow(
+        IDocumentRepository repository,
+        WorkspaceSnapshot workspace,
+        CloudBackupService cloudBackupService,
+        CloudBackupCoordinator cloudBackupCoordinator)
     {
         _repository = repository;
+        _cloudBackupService = cloudBackupService;
+        _cloudBackupCoordinator = cloudBackupCoordinator;
         _documents = workspace.Documents.ToList();
         _currentDocument = workspace.ActiveDocument;
         _isSidebarCollapsed = workspace.IsSidebarCollapsed;
@@ -58,6 +67,7 @@ public sealed class MainWindow : Window, IDisposable
         _languageKey = workspace.LanguageKey;
         _copy = EditorCopyCatalog.Load(_languageKey);
         _autosave = new AutosaveCoordinator(repository, TimeSpan.FromMilliseconds(350));
+        _cloudBackupCoordinator.ConfigureMerge(_autosave.Flush, ReloadWorkspaceAfterCloudMerge);
         _documentSettingsFlyoutFactory = new DocumentSettingsFlyoutFactory(
             _copy,
             () => _palette,
@@ -95,6 +105,7 @@ public sealed class MainWindow : Window, IDisposable
             () => _themeKey,
             () => _languageKey,
             ApplyEditorPreferences,
+            OpenCloudBackupSettings,
             _isSidebarCollapsed);
         Content = BuildLayout();
         _isLayoutReady = true;
@@ -150,6 +161,31 @@ public sealed class MainWindow : Window, IDisposable
         _editor.DefaultFontFamily = new FontFamily("avares://BNP/Assets/Fonts#Inconsolata");
         _editor.DefaultFontSize = EditorFontSizePoints;
         AutomationProperties.SetName(_editor, _copy.DocumentEditor);
+    }
+
+    private void OpenCloudBackupSettings()
+    {
+        var window = new CloudBackupSettingsWindow(
+            _cloudBackupService,
+            _cloudBackupCoordinator,
+            _copy);
+        _ = window.ShowDialog(this);
+    }
+
+    private void ReloadWorkspaceAfterCloudMerge()
+    {
+        var workspace = _repository.GetWorkspace();
+        _documents.Clear();
+        _documents.AddRange(workspace.Documents);
+        _currentDocument = workspace.ActiveDocument;
+
+        ApplyEditorPreferenceValues(workspace.ThemeKey, workspace.LanguageKey);
+        _isSidebarCollapsed = workspace.IsSidebarCollapsed;
+        _sidebar.IsVisible = !_isSidebarCollapsed;
+        _sidebarColumn.Width = _isSidebarCollapsed ? new GridLength(0) : new GridLength(252);
+        _chrome.SetSidebarCollapsed(_isSidebarCollapsed);
+        PopulateDocumentList();
+        LoadDocument(workspace.ActiveDocument);
     }
 
     private Border BuildLayout()
@@ -546,6 +582,11 @@ public sealed class MainWindow : Window, IDisposable
     private void ApplyEditorPreferences(string themeKey, string languageKey)
     {
         _repository.SetEditorPreferences(themeKey, languageKey);
+        ApplyEditorPreferenceValues(themeKey, languageKey);
+    }
+
+    private void ApplyEditorPreferenceValues(string themeKey, string languageKey)
+    {
         _themeKey = themeKey;
         RequestedThemeVariant = EditorThemePreference.ToThemeVariant(themeKey);
 

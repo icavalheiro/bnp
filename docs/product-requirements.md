@@ -14,7 +14,7 @@ The primary target is Linux, especially Fedora. Windows must also be supported u
 - Save and load documents without interrupting editing.
 - Keep documents available between sessions as persistent vertical tabs.
 - Let users identify documents visually with icons.
-- Synchronize the document library through Google Drive or Dropbox.
+- Synchronize the document library through Dropbox.
 - Create desktop shortcuts that open a specific internal document.
 - Export documents into a portable, shareable format.
 - Support rich text and structured visual content without losing a simple writing experience.
@@ -41,7 +41,6 @@ Cloud synchronization and LLM integration are treated as post-MVP capabilities u
 
 ### 1.4 Post-MVP scope
 
-- Google Drive synchronization.
 - Dropbox synchronization.
 - LLM-assisted document editing.
 - User-supplied document icons.
@@ -58,7 +57,7 @@ Cloud synchronization and LLM integration are treated as post-MVP capabilities u
 | Local user        | Person creating and editing documents on one device | Immediate startup, reliable saving, clear navigation                |
 | Multi-device user | Person using the same library on multiple computers | Predictable synchronization and conflict handling                   |
 | Recipient         | Person receiving an exported document               | Portable, documented content with preserved formatting              |
-| Cloud provider    | Google Drive or Dropbox API                         | Authorized, rate-limited, secure integration                        |
+| Cloud provider    | Dropbox API                                         | Authorized, rate-limited, secure integration                        |
 | LLM provider      | Local or remote language model service              | Explicitly selected content and controlled credentials              |
 | Operating system  | Fedora/Linux or Windows desktop environment         | Shortcut registration, file associations, secure credential storage |
 
@@ -98,7 +97,7 @@ As a local user, I want to export an internal document into a shareable package 
 
 ### US-09 — Synchronize through a cloud provider
 
-As a multi-device user, I want to synchronize my library through Google Drive or Dropbox so that documents are available across supported devices.
+As a multi-device user, I want to synchronize my library through Dropbox so that documents are available across supported devices.
 
 ### US-10 — Resolve synchronization conflicts
 
@@ -426,7 +425,7 @@ A short technical spike should compare production-like prototypes rather than �
 - Cross-platform desktop UI framework or platform toolkits.
 - Rich-text editing engine with tables, images, undo/redo, accessibility, and serialization support.
 - SQLite and migration tooling.
-- Google Drive and Dropbox OAuth and storage APIs.
+- Dropbox OAuth and storage APIs.
 - Platform credential stores.
 - Linux desktop entry and Windows shell-link integration.
 - A stable structured-content schema and portable package format.
@@ -476,7 +475,7 @@ This separation is a requirement for testability and platform support, not a man
 10. How should import handle an existing document with the same ID: duplicate it, replace it, merge revisions, or ask each time?
 11. Should deleted documents move to a recoverable trash, and for how long?
 12. Does cloud sync cover the full library as one application database/package, individual documents, or both?
-13. May the same library connect to Google Drive and Dropbox simultaneously?
+13. Should another cloud provider be added after the Dropbox integration is validated?
 14. What conflict-resolution experience is acceptable: keep both copies, field-level merge, rich-text visual diff, or a combination?
 15. Must cloud content use end-to-end encryption controlled by the user, beyond provider-side encryption?
 16. Is LLM support bring-your-own-key, bundled with a service, local-model only, or a combination?

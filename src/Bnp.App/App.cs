@@ -6,12 +6,15 @@ using Bnp.Diagnostics;
 using Bnp.Localization;
 using Bnp.Persistence;
 using Bnp.Presentation;
+using Bnp.Services.CloudBackup;
 
 namespace Bnp;
 
 public sealed class App : Application, IDisposable
 {
     private SqliteDocumentRepository? _repository;
+    private CloudBackupService? _cloudBackupService;
+    private CloudBackupCoordinator? _cloudBackupCoordinator;
 
     public override void Initialize()
     {
@@ -41,8 +44,18 @@ public sealed class App : Application, IDisposable
             }
 
             RequestedThemeVariant = EditorThemePreference.ToThemeVariant(workspace.ThemeKey);
+            _cloudBackupService = new CloudBackupService(
+                _repository,
+                Path.Combine(appDataPath, "cloud-backup.json"));
+            _cloudBackupCoordinator = new CloudBackupCoordinator(
+                _repository,
+                _cloudBackupService);
             StartupMetrics.MarkDatabaseReady();
-            desktop.MainWindow = new MainWindow(_repository, workspace);
+            desktop.MainWindow = new MainWindow(
+                _repository,
+                workspace,
+                _cloudBackupService,
+                _cloudBackupCoordinator);
             StartupMetrics.MarkWindowReady();
             desktop.Exit += OnDesktopExit;
         }
@@ -57,6 +70,10 @@ public sealed class App : Application, IDisposable
 
     public void Dispose()
     {
+        _cloudBackupCoordinator?.Dispose();
+        _cloudBackupCoordinator = null;
+        _cloudBackupService?.Dispose();
+        _cloudBackupService = null;
         _repository?.Dispose();
         _repository = null;
     }

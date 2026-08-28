@@ -9,11 +9,15 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
     private const string DefaultDocumentColor = "#5B6B82";
 
     private readonly SqliteConnection _connection;
+    private readonly TimeProvider _timeProvider;
     private bool _isInitialized;
 
-    public SqliteDocumentRepository(string databasePath)
+    public event Action? Changed;
+
+    public SqliteDocumentRepository(string databasePath, TimeProvider? timeProvider = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
+        _timeProvider = timeProvider ?? TimeProvider.System;
 
         var directory = Path.GetDirectoryName(databasePath);
         if (!string.IsNullOrEmpty(directory))
@@ -49,13 +53,19 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         return LoadWorkspace();
     }
 
+    public WorkspaceSnapshot GetWorkspace()
+    {
+        EnsureInitialized();
+        return LoadWorkspace();
+    }
+
     public DocumentRecord CreateDocument(string title, string iconKey = "file-text")
     {
         EnsureInitialized();
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
         ArgumentException.ThrowIfNullOrWhiteSpace(iconKey);
 
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
         var document = new DocumentRecord(
             Guid.NewGuid(),
             title.Trim(),
@@ -68,6 +78,7 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
             now);
 
         InsertDocument(document);
+        Changed?.Invoke();
         return document;
     }
 
@@ -109,6 +120,8 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         {
             throw new InvalidOperationException($"Document '{document.Id}' no longer exists.");
         }
+
+        Changed?.Invoke();
     }
 
     public void SetActiveDocument(Guid id)
@@ -122,11 +135,14 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         using var command = _connection.CreateCommand();
         command.CommandText = """
             UPDATE workspace_state
-            SET active_document_id = $id
+            SET active_document_id = $id,
+                active_document_updated_at = $updatedAt
             WHERE singleton_id = 1;
             """;
         command.Parameters.AddWithValue("$id", id.ToString("D"));
+        command.Parameters.AddWithValue("$updatedAt", _timeProvider.GetUtcNow().ToUnixTimeMilliseconds());
         command.ExecuteNonQuery();
+        Changed?.Invoke();
     }
 
     public void SetSidebarCollapsed(bool isCollapsed)
@@ -135,11 +151,14 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         using var command = _connection.CreateCommand();
         command.CommandText = """
             UPDATE workspace_state
-            SET sidebar_collapsed = $isCollapsed
+            SET sidebar_collapsed = $isCollapsed,
+                sidebar_updated_at = $updatedAt
             WHERE singleton_id = 1;
             """;
         command.Parameters.AddWithValue("$isCollapsed", isCollapsed ? 1 : 0);
+        command.Parameters.AddWithValue("$updatedAt", _timeProvider.GetUtcNow().ToUnixTimeMilliseconds());
         command.ExecuteNonQuery();
+        Changed?.Invoke();
     }
 
     public void SetEditorPreferences(string themeKey, string languageKey)
@@ -150,12 +169,120 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         using var command = _connection.CreateCommand();
         command.CommandText = """
             UPDATE workspace_state
-            SET theme_key = $themeKey, language_key = $languageKey
+            SET theme_key = $themeKey,
+                language_key = $languageKey,
+                theme_updated_at = $updatedAt,
+                language_updated_at = $updatedAt
             WHERE singleton_id = 1;
             """;
         command.Parameters.AddWithValue("$themeKey", themeKey);
         command.Parameters.AddWithValue("$languageKey", languageKey);
+        command.Parameters.AddWithValue("$updatedAt", _timeProvider.GetUtcNow().ToUnixTimeMilliseconds());
         command.ExecuteNonQuery();
+        Changed?.Invoke();
+    }
+
+    public bool MergeFrom(string sourcePath)
+    {
+        EnsureInitialized();
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+
+        using (var source = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = sourcePath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false
+        }.ToString()))
+        {
+            source.Open();
+            using var versionCommand = source.CreateCommand();
+            versionCommand.CommandText = "PRAGMA user_version;";
+            var version = Convert.ToInt32(versionCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
+            if (version != 4)
+            {
+                throw new NotSupportedException($"Cloud database schema version {version} is not supported.");
+            }
+        }
+
+        using var attachCommand = _connection.CreateCommand();
+        attachCommand.CommandText = "ATTACH DATABASE $sourcePath AS cloud;";
+        attachCommand.Parameters.AddWithValue("$sourcePath", sourcePath);
+        attachCommand.ExecuteNonQuery();
+        var changed = false;
+        try
+        {
+            using var transaction = _connection.BeginTransaction();
+            using var documentsCommand = _connection.CreateCommand();
+            documentsCommand.Transaction = transaction;
+            documentsCommand.CommandText = """
+                INSERT INTO documents(
+                    id, title, icon_key, color_key, content_format, content,
+                    tab_order, created_at, updated_at)
+                SELECT id, title, icon_key, color_key, content_format, content,
+                    tab_order, created_at, updated_at
+                FROM cloud.documents
+                WHERE true
+                ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    icon_key = excluded.icon_key,
+                    color_key = excluded.color_key,
+                    content_format = excluded.content_format,
+                    content = excluded.content,
+                    tab_order = excluded.tab_order,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at
+                WHERE excluded.updated_at > documents.updated_at;
+                """;
+            changed = documentsCommand.ExecuteNonQuery() > 0;
+
+            using var workspaceCommand = _connection.CreateCommand();
+            workspaceCommand.Transaction = transaction;
+            workspaceCommand.CommandText = """
+                UPDATE workspace_state
+                SET active_document_id = CASE
+                        WHEN cloud.active_document_updated_at > workspace_state.active_document_updated_at
+                        THEN cloud.active_document_id ELSE workspace_state.active_document_id END,
+                    active_document_updated_at = MAX(
+                        workspace_state.active_document_updated_at, cloud.active_document_updated_at),
+                    sidebar_collapsed = CASE
+                        WHEN cloud.sidebar_updated_at > workspace_state.sidebar_updated_at
+                        THEN cloud.sidebar_collapsed ELSE workspace_state.sidebar_collapsed END,
+                    sidebar_updated_at = MAX(
+                        workspace_state.sidebar_updated_at, cloud.sidebar_updated_at),
+                    theme_key = CASE
+                        WHEN cloud.theme_updated_at > workspace_state.theme_updated_at
+                        THEN cloud.theme_key ELSE workspace_state.theme_key END,
+                    theme_updated_at = MAX(
+                        workspace_state.theme_updated_at, cloud.theme_updated_at),
+                    language_key = CASE
+                        WHEN cloud.language_updated_at > workspace_state.language_updated_at
+                        THEN cloud.language_key ELSE workspace_state.language_key END,
+                    language_updated_at = MAX(
+                        workspace_state.language_updated_at, cloud.language_updated_at)
+                FROM cloud.workspace_state AS cloud
+                WHERE workspace_state.singleton_id = 1
+                  AND cloud.singleton_id = 1
+                  AND (cloud.active_document_updated_at > workspace_state.active_document_updated_at
+                    OR cloud.sidebar_updated_at > workspace_state.sidebar_updated_at
+                    OR cloud.theme_updated_at > workspace_state.theme_updated_at
+                    OR cloud.language_updated_at > workspace_state.language_updated_at);
+                """;
+            changed |= workspaceCommand.ExecuteNonQuery() > 0;
+            transaction.Commit();
+        }
+        finally
+        {
+            using var detachCommand = _connection.CreateCommand();
+            detachCommand.CommandText = "DETACH DATABASE cloud;";
+            detachCommand.ExecuteNonQuery();
+        }
+
+        if (changed)
+        {
+            Changed?.Invoke();
+        }
+
+        return changed;
     }
 
     public void CreateBackup(string destinationPath)
@@ -208,7 +335,13 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
             version = 3;
         }
 
-        if (version != 3)
+        if (version == 3)
+        {
+            Migration004.Apply(_connection);
+            version = 4;
+        }
+
+        if (version != 4)
         {
             throw new NotSupportedException($"Database schema version {version} is not supported.");
         }
@@ -223,7 +356,7 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
             return;
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
         var document = new DocumentRecord(
             Guid.NewGuid(),
             title,
@@ -241,10 +374,12 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         stateCommand.Transaction = transaction;
         stateCommand.CommandText = """
             UPDATE workspace_state
-            SET active_document_id = $id
+            SET active_document_id = $id,
+                active_document_updated_at = $updatedAt
             WHERE singleton_id = 1;
             """;
         stateCommand.Parameters.AddWithValue("$id", document.Id.ToString("D"));
+        stateCommand.Parameters.AddWithValue("$updatedAt", now.ToUnixTimeMilliseconds());
         stateCommand.ExecuteNonQuery();
         transaction.Commit();
     }
@@ -257,7 +392,7 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
             command.CommandText = """
                 SELECT id, title, icon_key, color_key, tab_order, updated_at
                 FROM documents
-                ORDER BY tab_order;
+                ORDER BY tab_order, id;
                 """;
             using var reader = command.ExecuteReader();
             while (reader.Read())

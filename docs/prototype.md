@@ -15,10 +15,10 @@ Implemented:
 - Native AOT publication for Windows x64.
 - Automated SQLite migration and restart tests.
 - Opt-in process-to-render startup benchmark.
+- Dropbox synchronization with timestamp-based SQLite merge.
 
 Not implemented in this slice:
 
-- Google Drive or Dropbox synchronization.
 - LLM integration.
 - Desktop document shortcuts.
 - Portable document export/import.

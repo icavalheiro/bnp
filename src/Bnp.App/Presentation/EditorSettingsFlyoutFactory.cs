@@ -3,6 +3,7 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Bnp.Localization;
+using Lucide.Avalonia;
 
 namespace Bnp.Presentation;
 
@@ -12,7 +13,8 @@ internal static class EditorSettingsFlyoutFactory
         EditorCopy copy,
         string selectedThemeKey,
         string selectedLanguageKey,
-        Action<string, string> applyPreferences)
+        Action<string, string> applyPreferences,
+        Action openCloudBackupSettings)
     {
         var themeOptions = new[]
         {
@@ -30,6 +32,26 @@ internal static class EditorSettingsFlyoutFactory
         var themeSelector = CreateSelector(themeOptions, selectedThemeKey, copy.Theme);
         var languageSelector = CreateSelector(languageOptions, selectedLanguageKey, copy.Language);
         var flyout = new Flyout();
+        var cloudBackupButton = new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    BnpIcons.Create(LucideIconKind.Cloud, 16),
+                    new TextBlock { Text = copy.CloudBackups, VerticalAlignment = VerticalAlignment.Center }
+                }
+            },
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetName(cloudBackupButton, copy.CloudBackups);
+        cloudBackupButton.Click += (_, _) =>
+        {
+            flyout.Hide();
+            openCloudBackupSettings();
+        };
         var applyButton = new Button
         {
             Content = copy.Apply,
@@ -61,6 +83,8 @@ internal static class EditorSettingsFlyoutFactory
                 themeSelector,
                 new TextBlock { Text = copy.Language, FontSize = 12 },
                 languageSelector,
+                new Separator(),
+                cloudBackupButton,
                 applyButton
             }
         };

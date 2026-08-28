@@ -22,6 +22,7 @@ internal sealed class MainWindowChrome
     private readonly Func<string> _getThemeKey;
     private readonly Func<string> _getLanguageKey;
     private readonly Action<string, string> _applyPreferences;
+    private readonly Action _openCloudBackupSettings;
     private readonly TextBlock _titleDisplay = new();
     private readonly Button _collapseButton = new();
     private readonly Button _settingsButton = new();
@@ -39,6 +40,7 @@ internal sealed class MainWindowChrome
         Func<string> getThemeKey,
         Func<string> getLanguageKey,
         Action<string, string> applyPreferences,
+        Action openCloudBackupSettings,
         bool isSidebarCollapsed)
     {
         _window = window;
@@ -49,6 +51,7 @@ internal sealed class MainWindowChrome
         _getThemeKey = getThemeKey;
         _getLanguageKey = getLanguageKey;
         _applyPreferences = applyPreferences;
+        _openCloudBackupSettings = openCloudBackupSettings;
         Header = BuildHeader(isSidebarCollapsed);
     }
 
@@ -62,6 +65,12 @@ internal sealed class MainWindowChrome
     public void ToggleSidebar()
     {
         var isCollapsed = _toggleSidebar();
+        _collapseButton.Content = BnpIcons.Create(
+            isCollapsed ? LucideIconKind.PanelLeftOpen : LucideIconKind.PanelLeftClose);
+    }
+
+    public void SetSidebarCollapsed(bool isCollapsed)
+    {
         _collapseButton.Content = BnpIcons.Create(
             isCollapsed ? LucideIconKind.PanelLeftOpen : LucideIconKind.PanelLeftClose);
     }
@@ -186,7 +195,8 @@ internal sealed class MainWindowChrome
                 _getCopy(),
                 _getThemeKey(),
                 _getLanguageKey(),
-                _applyPreferences);
+                _applyPreferences,
+                _openCloudBackupSettings);
             FlyoutBase.SetAttachedFlyout(_settingsButton, flyout);
             FlyoutBase.ShowAttachedFlyout(_settingsButton);
             eventArgs.Handled = true;

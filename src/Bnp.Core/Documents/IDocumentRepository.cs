@@ -4,6 +4,8 @@ public interface IDocumentRepository : IDisposable
 {
     WorkspaceSnapshot Initialize(string initialDocumentTitle, string initialDocumentContent);
 
+    WorkspaceSnapshot GetWorkspace();
+
     DocumentRecord CreateDocument(string title, string iconKey = "file-text");
 
     DocumentRecord? GetDocument(Guid id);

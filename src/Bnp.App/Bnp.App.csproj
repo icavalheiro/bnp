@@ -31,5 +31,6 @@
         <PackageReference Include="AvaloniaRichEditor" />
         <PackageReference Include="Lucide.Avalonia" />
         <PackageReference Include="Microsoft.Data.Sqlite" />
+        <PackageReference Include="System.Security.Cryptography.ProtectedData" />
     </ItemGroup>
 </Project>

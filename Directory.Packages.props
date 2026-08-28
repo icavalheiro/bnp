@@ -9,6 +9,7 @@
         <PackageVersion Include="AvaloniaRichEditor" Version="1.1.0" />
         <PackageVersion Include="Lucide.Avalonia" Version="0.2.19" />
         <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.11" />
+        <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.11" />
         <PackageVersion Include="xunit.v3.mtp-v2" Version="4.0.0" />
     </ItemGroup>
 </Project>
