@@ -3,6 +3,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Styling;
 using Avalonia.Themes.Fluent;
 using Bnp.Diagnostics;
+using Bnp.Localization;
 using Bnp.Persistence;
 using Bnp.Presentation;
 
@@ -26,8 +27,20 @@ public sealed class App : Application, IDisposable
             var appDataPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "BNP");
+            var copy = EditorCopyCatalog.Load(System.Globalization.CultureInfo.CurrentUICulture);
             _repository = new SqliteDocumentRepository(Path.Combine(appDataPath, "bnp.db"));
-            var workspace = _repository.Initialize();
+            var workspace = _repository.Initialize(
+                copy.WelcomeDocumentTitle,
+                copy.WelcomeDocumentContent);
+            if (string.IsNullOrEmpty(workspace.LanguageKey))
+            {
+                var languageKey = EditorCopyCatalog.ResolveLanguage(
+                    System.Globalization.CultureInfo.CurrentUICulture);
+                _repository.SetEditorPreferences(workspace.ThemeKey, languageKey);
+                workspace = workspace with { LanguageKey = languageKey };
+            }
+
+            RequestedThemeVariant = EditorThemePreference.ToThemeVariant(workspace.ThemeKey);
             StartupMetrics.MarkDatabaseReady();
             desktop.MainWindow = new MainWindow(_repository, workspace);
             StartupMetrics.MarkWindowReady();

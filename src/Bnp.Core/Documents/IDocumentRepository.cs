@@ -2,7 +2,7 @@ namespace Bnp.Core.Documents;
 
 public interface IDocumentRepository : IDisposable
 {
-    WorkspaceSnapshot Initialize();
+    WorkspaceSnapshot Initialize(string initialDocumentTitle, string initialDocumentContent);
 
     DocumentRecord CreateDocument(string title, string iconKey = "file-text");
 
@@ -13,4 +13,6 @@ public interface IDocumentRepository : IDisposable
     void SetActiveDocument(Guid id);
 
     void SetSidebarCollapsed(bool isCollapsed);
+
+    void SetEditorPreferences(string themeKey, string languageKey);
 }

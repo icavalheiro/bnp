@@ -1,11 +1,13 @@
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Bnp.Localization;
 using Lucide.Avalonia;
 
 namespace Bnp.Presentation;
@@ -14,9 +16,15 @@ internal sealed class MainWindowChrome
 {
     private readonly Window _window;
     private readonly Border _windowFrame;
+    private readonly Func<EditorCopy> _getCopy;
     private readonly Func<BnpPalette> _getPalette;
     private readonly Func<bool> _toggleSidebar;
+    private readonly Func<string> _getThemeKey;
+    private readonly Func<string> _getLanguageKey;
+    private readonly Action<string, string> _applyPreferences;
     private readonly TextBlock _titleDisplay = new();
+    private readonly Button _collapseButton = new();
+    private readonly Button _settingsButton = new();
     private readonly Button _minimizeButton = new();
     private readonly Button _maximizeButton = new();
     private readonly Button _closeButton = new();
@@ -25,14 +33,22 @@ internal sealed class MainWindowChrome
     public MainWindowChrome(
         Window window,
         Border windowFrame,
+        Func<EditorCopy> getCopy,
         Func<BnpPalette> getPalette,
         Func<bool> toggleSidebar,
+        Func<string> getThemeKey,
+        Func<string> getLanguageKey,
+        Action<string, string> applyPreferences,
         bool isSidebarCollapsed)
     {
         _window = window;
         _windowFrame = windowFrame;
+        _getCopy = getCopy;
         _getPalette = getPalette;
         _toggleSidebar = toggleSidebar;
+        _getThemeKey = getThemeKey;
+        _getLanguageKey = getLanguageKey;
+        _applyPreferences = applyPreferences;
         Header = BuildHeader(isSidebarCollapsed);
     }
 
@@ -75,6 +91,21 @@ internal sealed class MainWindowChrome
         ApplyWindowState();
     }
 
+    public void ApplyCopy()
+    {
+        var copy = _getCopy();
+        SetAccessibleName(_collapseButton, copy.ToggleDocumentSidebar);
+        SetAccessibleName(_settingsButton, copy.EditorSettings);
+        AutomationProperties.SetName(_titleDisplay, copy.CurrentDocumentTitle);
+        SetAccessibleName(_minimizeButton, copy.MinimizeWindow);
+        SetAccessibleName(
+            _maximizeButton,
+            _window.WindowState == WindowState.Maximized
+                ? copy.RestoreWindow
+                : copy.MaximizeWindow);
+        SetAccessibleName(_closeButton, copy.CloseWindow);
+    }
+
     public void ApplyWindowState()
     {
         var isMaximized = _window.WindowState == WindowState.Maximized;
@@ -82,7 +113,8 @@ internal sealed class MainWindowChrome
             isMaximized ? LucideIconKind.Copy : LucideIconKind.Maximize2,
             16);
 
-        var maximizeLabel = isMaximized ? "Restore window" : "Maximize window";
+        var copy = _getCopy();
+        var maximizeLabel = isMaximized ? copy.RestoreWindow : copy.MaximizeWindow;
         ToolTip.SetTip(_maximizeButton, maximizeLabel);
         AutomationProperties.SetName(_maximizeButton, maximizeLabel);
         _windowFrame.BorderThickness = isMaximized ? new Thickness(0) : new Thickness(1);
@@ -104,13 +136,14 @@ internal sealed class MainWindowChrome
 
     private Border BuildHeader(bool isSidebarCollapsed)
     {
-        var collapseButton = CreateIconButton(
+        ConfigureIconButton(
+            _collapseButton,
             isSidebarCollapsed ? LucideIconKind.PanelLeftOpen : LucideIconKind.PanelLeftClose,
-            "Toggle document sidebar");
-        collapseButton.Click += (_, _) =>
+            _getCopy().ToggleDocumentSidebar);
+        _collapseButton.Click += (_, _) =>
         {
             var isCollapsed = _toggleSidebar();
-            collapseButton.Content = BnpIcons.Create(
+            _collapseButton.Content = BnpIcons.Create(
                 isCollapsed ? LucideIconKind.PanelLeftOpen : LucideIconKind.PanelLeftClose);
         };
 
@@ -124,7 +157,7 @@ internal sealed class MainWindowChrome
         _titleDisplay.FontWeight = FontWeight.SemiBold;
         _titleDisplay.VerticalAlignment = VerticalAlignment.Center;
         _titleDisplay.IsHitTestVisible = false;
-        AutomationProperties.SetName(_titleDisplay, "Current document title");
+        AutomationProperties.SetName(_titleDisplay, _getCopy().CurrentDocumentTitle);
 
         var brand = new StackPanel
         {
@@ -133,7 +166,7 @@ internal sealed class MainWindowChrome
             VerticalAlignment = VerticalAlignment.Center,
             Children =
             {
-                collapseButton,
+                _collapseButton,
                 new Image
                 {
                     Source = new Bitmap(AssetLoader.Open(new Uri("avares://BNP/Assets/BNP.ico"))),
@@ -144,14 +177,33 @@ internal sealed class MainWindowChrome
             }
         };
         var captionButtons = BuildCaptionButtons();
+        ConfigureIconButton(_settingsButton, LucideIconKind.Settings, _getCopy().EditorSettings);
+        _settingsButton.Click += (_, eventArgs) =>
+        {
+            var flyout = EditorSettingsFlyoutFactory.Create(
+                _getCopy(),
+                _getThemeKey(),
+                _getLanguageKey(),
+                _applyPreferences);
+            FlyoutBase.SetAttachedFlyout(_settingsButton, flyout);
+            FlyoutBase.ShowAttachedFlyout(_settingsButton);
+            eventArgs.Handled = true;
+        };
+        var rightActions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Children = { _settingsButton, captionButtons }
+        };
         var headerLayout = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("*,Auto,*"),
             Background = Brushes.Transparent,
-            Children = { brand, _titleDisplay, captionButtons }
+            Children = { brand, _titleDisplay, rightActions }
         };
         Grid.SetColumn(_titleDisplay, 1);
-        Grid.SetColumn(captionButtons, 2);
+        Grid.SetColumn(rightActions, 2);
         headerLayout.PointerPressed += OnTitleBarPointerPressed;
 
         return new Border
@@ -165,13 +217,13 @@ internal sealed class MainWindowChrome
 
     private StackPanel BuildCaptionButtons()
     {
-        ConfigureCaptionButton(_minimizeButton, LucideIconKind.Minus, "Minimize window");
+        ConfigureCaptionButton(_minimizeButton, LucideIconKind.Minus, _getCopy().MinimizeWindow);
         _minimizeButton.Click += (_, _) => _window.WindowState = WindowState.Minimized;
 
-        ConfigureCaptionButton(_maximizeButton, LucideIconKind.Maximize2, "Maximize window");
+        ConfigureCaptionButton(_maximizeButton, LucideIconKind.Maximize2, _getCopy().MaximizeWindow);
         _maximizeButton.Click += (_, _) => ToggleMaximize();
 
-        ConfigureCaptionButton(_closeButton, LucideIconKind.X, "Close window");
+        ConfigureCaptionButton(_closeButton, LucideIconKind.X, _getCopy().CloseWindow);
         _closeButton.Click += (_, _) => _window.Close();
         _closeButton.PointerEntered += (_, _) =>
         {
@@ -212,25 +264,26 @@ internal sealed class MainWindowChrome
         AutomationProperties.SetName(button, accessibleName);
     }
 
-    private Button CreateIconButton(LucideIconKind icon, string accessibleName)
+    private void ConfigureIconButton(Button button, LucideIconKind icon, string accessibleName)
     {
-        var button = new Button
-        {
-            Content = BnpIcons.Create(icon),
-            Width = 32,
-            Height = 32,
-            Padding = new Thickness(6),
-            Background = Brushes.Transparent,
-            BorderBrush = Brushes.Transparent,
-            CornerRadius = new CornerRadius(5),
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center
-        };
+        button.Content = BnpIcons.Create(icon);
+        button.Width = 32;
+        button.Height = 32;
+        button.Padding = new Thickness(6);
+        button.Background = Brushes.Transparent;
+        button.BorderBrush = Brushes.Transparent;
+        button.CornerRadius = new CornerRadius(5);
+        button.HorizontalContentAlignment = HorizontalAlignment.Center;
+        button.VerticalContentAlignment = VerticalAlignment.Center;
         button.PointerEntered += (_, _) => button.Background = _getPalette().ButtonHover;
         button.PointerExited += (_, _) => button.Background = Brushes.Transparent;
+        SetAccessibleName(button, accessibleName);
+    }
+
+    private static void SetAccessibleName(Button button, string accessibleName)
+    {
         ToolTip.SetTip(button, accessibleName);
         AutomationProperties.SetName(button, accessibleName);
-        return button;
     }
 
     private void OnTitleBarPointerPressed(object? sender, PointerPressedEventArgs eventArgs)

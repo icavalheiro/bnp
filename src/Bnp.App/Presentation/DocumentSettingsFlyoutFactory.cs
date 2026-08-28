@@ -7,26 +7,35 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Bnp.Core.Documents;
+using Bnp.Localization;
 
 namespace Bnp.Presentation;
 
 internal sealed class DocumentSettingsFlyoutFactory(
+    EditorCopy copy,
     Func<BnpPalette> getPalette,
     Func<Guid, string?, string, string, bool> saveDocumentSettings)
 {
-    private static readonly (string Label, string Color)[] DocumentColorOptions =
+    private EditorCopy _copy = copy;
+
+    private static readonly (string Key, string Color)[] DocumentColorOptions =
     [
-        ("Slate", "#5B6B82"),
-        ("Red", "#C43D4F"),
-        ("Orange", "#D56A28"),
-        ("Gold", "#B88718"),
-        ("Green", "#31875B"),
-        ("Teal", "#25858A"),
-        ("Blue", "#3678C8"),
-        ("Indigo", "#575BC7"),
-        ("Purple", "#8A4FB0"),
-        ("Pink", "#C04F82")
+        ("slate", "#5B6B82"),
+        ("red", "#C43D4F"),
+        ("orange", "#D56A28"),
+        ("gold", "#B88718"),
+        ("green", "#31875B"),
+        ("teal", "#25858A"),
+        ("blue", "#3678C8"),
+        ("indigo", "#575BC7"),
+        ("purple", "#8A4FB0"),
+        ("pink", "#C04F82")
     ];
+
+    public void ApplyCopy(EditorCopy updatedCopy)
+    {
+        _copy = updatedCopy;
+    }
 
     public Flyout Create(DocumentSummary document)
     {
@@ -38,7 +47,7 @@ internal sealed class DocumentSettingsFlyoutFactory(
             MinWidth = 310,
             MaxLength = 120
         };
-        AutomationProperties.SetName(titleEditor, "Document name");
+        AutomationProperties.SetName(titleEditor, _copy.DocumentName);
 
         var preview = new Button
         {
@@ -60,7 +69,7 @@ internal sealed class DocumentSettingsFlyoutFactory(
         };
         foreach (var option in BnpIcons.DocumentIcons)
         {
-            var iconButton = CreateIconButton(option.Kind, option.Label);
+            var iconButton = CreateIconButton(option.Kind, _copy.DocumentIcons[option.Key]);
             iconButton.Width = 34;
             iconButton.Height = 34;
             iconButton.Padding = new Thickness(7);
@@ -80,7 +89,7 @@ internal sealed class DocumentSettingsFlyoutFactory(
             Orientation = Orientation.Horizontal,
             Spacing = 7
         };
-        foreach (var (label, color) in DocumentColorOptions)
+        foreach (var (key, color) in DocumentColorOptions)
         {
             var colorButton = new Button
             {
@@ -98,8 +107,8 @@ internal sealed class DocumentSettingsFlyoutFactory(
                     CornerRadius = new CornerRadius(3)
                 }
             };
-            ToolTip.SetTip(colorButton, label);
-            AutomationProperties.SetName(colorButton, label);
+            ToolTip.SetTip(colorButton, _copy.DocumentColors[key]);
+            AutomationProperties.SetName(colorButton, _copy.DocumentColors[key]);
             colorButtons.Add((colorButton, color));
             colorPanel.Children.Add(colorButton);
             colorButton.Click += (_, _) =>
@@ -111,8 +120,8 @@ internal sealed class DocumentSettingsFlyoutFactory(
         }
 
         var flyout = new Flyout();
-        var cancelButton = new Button { Content = "Cancel" };
-        var saveButton = new Button { Content = "Save" };
+        var cancelButton = new Button { Content = _copy.Cancel };
+        var saveButton = new Button { Content = _copy.Save };
         cancelButton.Click += (_, _) => flyout.Hide();
         saveButton.Click += (_, _) =>
         {
@@ -146,7 +155,7 @@ internal sealed class DocumentSettingsFlyoutFactory(
             {
                 new TextBlock
                 {
-                    Text = "Document settings",
+                    Text = _copy.DocumentSettings,
                     FontSize = 15,
                     FontWeight = FontWeight.SemiBold,
                     VerticalAlignment = VerticalAlignment.Center
@@ -170,9 +179,9 @@ internal sealed class DocumentSettingsFlyoutFactory(
             Children =
             {
                 header,
-                new TextBlock { Text = "Name", FontSize = 12, FontWeight = FontWeight.SemiBold },
+                new TextBlock { Text = _copy.Name, FontSize = 12, FontWeight = FontWeight.SemiBold },
                 titleEditor,
-                new TextBlock { Text = "Icon", FontSize = 12, FontWeight = FontWeight.SemiBold },
+                new TextBlock { Text = _copy.Icon, FontSize = 12, FontWeight = FontWeight.SemiBold },
                 new ScrollViewer
                 {
                     Content = iconPanel,
@@ -180,7 +189,7 @@ internal sealed class DocumentSettingsFlyoutFactory(
                     HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                     VerticalScrollBarVisibility = ScrollBarVisibility.Auto
                 },
-                new TextBlock { Text = "Color", FontSize = 12, FontWeight = FontWeight.SemiBold },
+                new TextBlock { Text = _copy.Color, FontSize = 12, FontWeight = FontWeight.SemiBold },
                 colorPanel,
                 footer
             }

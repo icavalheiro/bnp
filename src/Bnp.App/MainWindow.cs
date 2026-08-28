@@ -10,6 +10,7 @@ using Avalonia.Styling;
 using AvaloniaRichEditor.Controls;
 using Bnp.Core.Documents;
 using Bnp.Diagnostics;
+using Bnp.Localization;
 using Bnp.Presentation;
 using Bnp.Services;
 using Lucide.Avalonia;
@@ -31,14 +32,18 @@ public sealed class MainWindow : Window, IDisposable
     private readonly ScrollViewer _editorSurface = new();
     private readonly Border _statusBorder = new();
     private readonly TextBlock _sidebarTitle = new();
+    private readonly Button _addDocumentButton = new();
     private readonly DocumentSettingsFlyoutFactory _documentSettingsFlyoutFactory;
     private readonly EditorFormattingToolbar _editorToolbar;
     private readonly MainWindowChrome _chrome;
+    private EditorCopy _copy;
     private DocumentRecord _currentDocument;
     private BnpPalette _palette = BnpTheme.GetPalette(ThemeVariant.Light);
     private bool _isLayoutReady;
     private bool _isLoadingDocument;
     private bool _isSidebarCollapsed;
+    private string _themeKey;
+    private string _languageKey;
 
     public MainWindow(IDocumentRepository repository, WorkspaceSnapshot workspace)
     {
@@ -46,12 +51,16 @@ public sealed class MainWindow : Window, IDisposable
         _documents = workspace.Documents.ToList();
         _currentDocument = workspace.ActiveDocument;
         _isSidebarCollapsed = workspace.IsSidebarCollapsed;
+        _themeKey = workspace.ThemeKey;
+        _languageKey = workspace.LanguageKey;
+        _copy = EditorCopyCatalog.Load(_languageKey);
         _autosave = new AutosaveCoordinator(repository, TimeSpan.FromMilliseconds(350));
         _documentSettingsFlyoutFactory = new DocumentSettingsFlyoutFactory(
+            _copy,
             () => _palette,
             SaveDocumentSettings);
 
-        Title = "bnp";
+        Title = _copy.ApplicationTitle;
         Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://BNP/Assets/BNP.ico")));
         Width = 1100;
         Height = 720;
@@ -69,12 +78,20 @@ public sealed class MainWindow : Window, IDisposable
         Win32Properties.SetWindowCornerPreference(this, Win32Properties.WindowCornerPreference.RoundSmall);
 
         ConfigureEditor();
-        _editorToolbar = new EditorFormattingToolbar(_editor, GetAutomaticTextBrush, () => _palette);
+        _editorToolbar = new EditorFormattingToolbar(
+            _editor,
+            _copy,
+            GetAutomaticTextBrush,
+            () => _palette);
         _chrome = new MainWindowChrome(
             this,
             _windowFrame,
+            () => _copy,
             () => _palette,
             ToggleSidebar,
+            () => _themeKey,
+            () => _languageKey,
+            ApplyEditorPreferences,
             _isSidebarCollapsed);
         Content = BuildLayout();
         _isLayoutReady = true;
@@ -128,7 +145,7 @@ public sealed class MainWindow : Window, IDisposable
         _editor.AllowLocalFileImages = false;
         _editor.AllowRemoteImagesOnPaste = false;
         _editor.DefaultFontSize = 12;
-        AutomationProperties.SetName(_editor, "Document editor");
+        AutomationProperties.SetName(_editor, _copy.DocumentEditor);
     }
 
     private Border BuildLayout()
@@ -179,16 +196,16 @@ public sealed class MainWindow : Window, IDisposable
 
     private Grid BuildSidebar()
     {
-        var addButton = CreateIconButton(LucideIconKind.Plus, "New document");
-        addButton.Click += (_, _) => CreateDocument();
+        ConfigureIconButton(_addDocumentButton, LucideIconKind.Plus, _copy.NewDocument);
+        _addDocumentButton.Click += (_, _) => CreateDocument();
 
         var actions = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 4,
-            Children = { addButton }
+            Children = { _addDocumentButton }
         };
-        _sidebarTitle.Text = "Documents";
+        _sidebarTitle.Text = _copy.Documents;
         _sidebarTitle.FontSize = 12;
         _sidebarTitle.FontWeight = FontWeight.SemiBold;
         _sidebarTitle.VerticalAlignment = VerticalAlignment.Center;
@@ -205,7 +222,7 @@ public sealed class MainWindow : Window, IDisposable
         _documentList.Background = Brushes.Transparent;
         _documentList.BorderThickness = new Thickness(0);
         _documentList.Padding = new Thickness(0, 3, 0, 8);
-        AutomationProperties.SetName(_documentList, "Open documents");
+        AutomationProperties.SetName(_documentList, _copy.OpenDocuments);
 
         var sidebarLayout = new Grid
         {
@@ -218,7 +235,7 @@ public sealed class MainWindow : Window, IDisposable
 
     private Border BuildStatusBar()
     {
-        _saveStatus.Text = "Saved";
+        _saveStatus.Text = _copy.Saved;
         _saveStatus.HorizontalAlignment = HorizontalAlignment.Right;
 
         _saveStatus.FontSize = 12;
@@ -272,7 +289,12 @@ public sealed class MainWindow : Window, IDisposable
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis
         };
-        var settingsButton = CreateIconButton(LucideIconKind.Settings, $"Configure {document.Title}");
+        var settingsButton = CreateIconButton(
+            LucideIconKind.Settings,
+            string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                _copy.ConfigureDocument,
+                document.Title));
         settingsButton.Width = 28;
         settingsButton.Height = 28;
         settingsButton.Padding = new Thickness(5);
@@ -327,7 +349,7 @@ public sealed class MainWindow : Window, IDisposable
             : _repository.GetDocument(documentId);
         if (document is null)
         {
-            _saveStatus.Text = "Document unavailable";
+            _saveStatus.Text = _copy.DocumentUnavailable;
             return false;
         }
 
@@ -343,7 +365,10 @@ public sealed class MainWindow : Window, IDisposable
         {
             _currentDocument = updatedDocument;
             _chrome.SetDocumentTitle(title);
-            Title = $"BNP - {title}";
+            Title = string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                _copy.WindowTitle,
+                title);
         }
 
         var index = _documents.FindIndex(summary => summary.Id == documentId);
@@ -353,7 +378,7 @@ public sealed class MainWindow : Window, IDisposable
         }
 
         PopulateDocumentList();
-        _saveStatus.Text = "Saved";
+        _saveStatus.Text = _copy.Saved;
         return true;
     }
 
@@ -370,10 +395,10 @@ public sealed class MainWindow : Window, IDisposable
         {
             _saveStatus.Text = status switch
             {
-                SaveStatus.Unsaved => "Unsaved",
-                SaveStatus.Saving => "Saving...",
-                SaveStatus.Failed => "Save failed",
-                _ => "Saved"
+                SaveStatus.Unsaved => _copy.Unsaved,
+                SaveStatus.Saving => _copy.Saving,
+                SaveStatus.Failed => _copy.SaveFailed,
+                _ => _copy.Saved
             };
         };
         _documentList.SelectionChanged += (_, _) => SwitchToSelectedDocument();
@@ -384,7 +409,11 @@ public sealed class MainWindow : Window, IDisposable
     {
         _autosave.Flush();
 
-        var document = _repository.CreateDocument($"Untitled {_documents.Count + 1}");
+        var document = _repository.CreateDocument(
+            string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                _copy.UntitledDocument,
+                _documents.Count + 1));
         _documents.Add(ToSummary(document));
         var item = CreateDocumentListItem(ToSummary(document));
         _documentList.Items.Add(item);
@@ -403,7 +432,7 @@ public sealed class MainWindow : Window, IDisposable
         var document = _repository.GetDocument(documentId);
         if (document is null)
         {
-            _saveStatus.Text = "Document unavailable";
+            _saveStatus.Text = _copy.DocumentUnavailable;
             return;
         }
 
@@ -418,7 +447,10 @@ public sealed class MainWindow : Window, IDisposable
         {
             _currentDocument = document;
             _chrome.SetDocumentTitle(document.Title);
-            Title = $"BNP - {document.Title}";
+            Title = string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                _copy.WindowTitle,
+                document.Title);
 
             if (document.ContentFormat == DocumentFormats.AvaloniaRichEditorJsonV1)
             {
@@ -433,7 +465,7 @@ public sealed class MainWindow : Window, IDisposable
             ApplyDocumentTextTheme();
             _editorToolbar.SyncFromCaret();
             _editor.MarkSaved();
-            _saveStatus.Text = "Saved";
+            _saveStatus.Text = _copy.Saved;
         }
         finally
         {
@@ -475,21 +507,58 @@ public sealed class MainWindow : Window, IDisposable
     {
         var button = new Button
         {
-            Content = BnpIcons.Create(icon),
-            Width = 32,
-            Height = 32,
-            Padding = new Thickness(6),
-            Background = Brushes.Transparent,
-            BorderBrush = Brushes.Transparent,
-            CornerRadius = new CornerRadius(5),
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center
         };
+        ConfigureIconButton(button, icon, accessibleName);
+        return button;
+    }
+
+    private void ConfigureIconButton(Button button, LucideIconKind icon, string accessibleName)
+    {
+        button.Content = BnpIcons.Create(icon);
+        button.Width = 32;
+        button.Height = 32;
+        button.Padding = new Thickness(6);
+        button.Background = Brushes.Transparent;
+        button.BorderBrush = Brushes.Transparent;
+        button.CornerRadius = new CornerRadius(5);
+        button.HorizontalContentAlignment = HorizontalAlignment.Center;
+        button.VerticalContentAlignment = VerticalAlignment.Center;
         button.PointerEntered += (_, _) => button.Background = _palette.ButtonHover;
         button.PointerExited += (_, _) => button.Background = Brushes.Transparent;
         ToolTip.SetTip(button, accessibleName);
         AutomationProperties.SetName(button, accessibleName);
-        return button;
+    }
+
+    private void ApplyEditorPreferences(string themeKey, string languageKey)
+    {
+        _repository.SetEditorPreferences(themeKey, languageKey);
+        _themeKey = themeKey;
+        RequestedThemeVariant = EditorThemePreference.ToThemeVariant(themeKey);
+
+        if (_languageKey == languageKey)
+        {
+            return;
+        }
+
+        _languageKey = languageKey;
+        System.Globalization.CultureInfo.CurrentUICulture =
+            System.Globalization.CultureInfo.GetCultureInfo(languageKey);
+        _copy = EditorCopyCatalog.Load(languageKey);
+        _documentSettingsFlyoutFactory.ApplyCopy(_copy);
+        _editorToolbar.ApplyCopy(_copy);
+        _chrome.ApplyCopy();
+
+        AutomationProperties.SetName(_editor, _copy.DocumentEditor);
+        ToolTip.SetTip(_addDocumentButton, _copy.NewDocument);
+        AutomationProperties.SetName(_addDocumentButton, _copy.NewDocument);
+        _sidebarTitle.Text = _copy.Documents;
+        AutomationProperties.SetName(_documentList, _copy.OpenDocuments);
+        _saveStatus.Text = _copy.Saved;
+        Title = string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            _copy.WindowTitle,
+            _currentDocument.Title);
+        PopulateDocumentList();
     }
 
     private void ApplyTheme()

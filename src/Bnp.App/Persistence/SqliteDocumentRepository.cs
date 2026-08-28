@@ -30,8 +30,11 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         }.ToString());
     }
 
-    public WorkspaceSnapshot Initialize()
+    public WorkspaceSnapshot Initialize(string initialDocumentTitle, string initialDocumentContent)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(initialDocumentTitle);
+        ArgumentNullException.ThrowIfNull(initialDocumentContent);
+
         if (!_isInitialized)
         {
             _connection.Open();
@@ -39,7 +42,7 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
             Execute("PRAGMA synchronous = NORMAL;");
             Execute("PRAGMA busy_timeout = 2500;");
             ApplyMigrations();
-            EnsureInitialDocument();
+            EnsureInitialDocument(initialDocumentTitle, initialDocumentContent);
             _isInitialized = true;
         }
 
@@ -139,6 +142,22 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         command.ExecuteNonQuery();
     }
 
+    public void SetEditorPreferences(string themeKey, string languageKey)
+    {
+        EnsureInitialized();
+        ArgumentException.ThrowIfNullOrWhiteSpace(themeKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(languageKey);
+        using var command = _connection.CreateCommand();
+        command.CommandText = """
+            UPDATE workspace_state
+            SET theme_key = $themeKey, language_key = $languageKey
+            WHERE singleton_id = 1;
+            """;
+        command.Parameters.AddWithValue("$themeKey", themeKey);
+        command.Parameters.AddWithValue("$languageKey", languageKey);
+        command.ExecuteNonQuery();
+    }
+
     public void Dispose()
     {
         _connection.Dispose();
@@ -162,13 +181,19 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
             version = 2;
         }
 
-        if (version != 2)
+        if (version == 2)
+        {
+            Migration003.Apply(_connection);
+            version = 3;
+        }
+
+        if (version != 3)
         {
             throw new NotSupportedException($"Database schema version {version} is not supported.");
         }
     }
 
-    private void EnsureInitialDocument()
+    private void EnsureInitialDocument(string title, string content)
     {
         using var countCommand = _connection.CreateCommand();
         countCommand.CommandText = "SELECT COUNT(*) FROM documents;";
@@ -180,11 +205,11 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         var now = DateTimeOffset.UtcNow;
         var document = new DocumentRecord(
             Guid.NewGuid(),
-            "Welcome",
+            title,
             "file-text",
             DefaultDocumentColor,
             DocumentFormats.PlainTextV1,
-            "Welcome to BNP.",
+            content,
             0,
             now,
             now);
@@ -228,7 +253,7 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
 
         using var stateCommand = _connection.CreateCommand();
         stateCommand.CommandText = """
-            SELECT active_document_id, sidebar_collapsed
+            SELECT active_document_id, sidebar_collapsed, theme_key, language_key
             FROM workspace_state
             WHERE singleton_id = 1;
             """;
@@ -242,12 +267,19 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
             ? documents[0].Id
             : Guid.Parse(stateReader.GetString(0));
         var isSidebarCollapsed = stateReader.GetInt32(1) != 0;
+        var themeKey = stateReader.GetString(2);
+        var languageKey = stateReader.GetString(3);
         stateReader.Close();
 
         var activeDocument = GetDocument(activeId) ?? GetDocument(documents[0].Id)
             ?? throw new InvalidOperationException("The workspace has no active document.");
 
-        return new WorkspaceSnapshot(documents, activeDocument, isSidebarCollapsed);
+        return new WorkspaceSnapshot(
+            documents,
+            activeDocument,
+            isSidebarCollapsed,
+            themeKey,
+            languageKey);
     }
 
     private void InsertDocument(DocumentRecord document, SqliteTransaction? transaction = null)

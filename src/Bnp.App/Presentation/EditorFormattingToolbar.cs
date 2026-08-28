@@ -7,86 +7,50 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using AvaloniaRichEditor.Controls;
+using Bnp.Localization;
 using Lucide.Avalonia;
 
 namespace Bnp.Presentation;
 
 internal sealed class EditorFormattingToolbar
 {
-    private static readonly (string Label, string Color)[] TextColorOptions =
+    private static readonly (string Key, string Color)[] TextColorOptions =
     [
-        ("Red", "#E53935"),
-        ("Orange", "#FB8C00"),
-        ("Yellow", "#FDD835"),
-        ("Green", "#43A047"),
-        ("Teal", "#00897B"),
-        ("Blue", "#1E88E5"),
-        ("Purple", "#8E24AA"),
-        ("Gray", "#616161")
+        ("red", "#E53935"),
+        ("orange", "#FB8C00"),
+        ("yellow", "#FDD835"),
+        ("green", "#43A047"),
+        ("teal", "#00897B"),
+        ("blue", "#1E88E5"),
+        ("purple", "#8E24AA"),
+        ("gray", "#616161")
     ];
 
     private readonly RichEditor _editor;
+    private EditorCopy _copy;
     private readonly Func<IBrush> _getAutomaticTextBrush;
     private readonly Func<BnpPalette> _getPalette;
-    private readonly Button _textColorButton;
-    private readonly Button _clearFormattingButton;
+    private Button _textColorButton = null!;
+    private Button _clearFormattingButton = null!;
     private readonly List<Border> _separators = new();
     private IBrush? _activeTextColor;
 
     public EditorFormattingToolbar(
         RichEditor editor,
+        EditorCopy copy,
         Func<IBrush> getAutomaticTextBrush,
         Func<BnpPalette> getPalette)
     {
         _editor = editor;
+        _copy = copy;
         _getAutomaticTextBrush = getAutomaticTextBrush;
         _getPalette = getPalette;
-
-        _textColorButton = CreateIconButton(LucideIconKind.Palette, "Text color");
-        AttachTextColorMenu(_textColorButton);
-
-        _clearFormattingButton = CreateFormattingButton(
-            LucideIconKind.RemoveFormatting,
-            "Clear formatting",
-            ClearSelectedFormatting);
-        _clearFormattingButton.IsEnabled = false;
-
-        var toolbar = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 3,
-            Margin = new Thickness(10, 5),
-            Children =
-            {
-                CreateFormattingButton(LucideIconKind.Undo2, "Undo", _editor.Undo),
-                CreateFormattingButton(LucideIconKind.Redo2, "Redo", _editor.Redo),
-                CreateSeparator(),
-                CreateFormattingButton(LucideIconKind.Bold, "Bold", _editor.ToggleBold),
-                CreateFormattingButton(LucideIconKind.Italic, "Italic", _editor.ToggleItalic),
-                CreateFormattingButton(LucideIconKind.Highlighter, "Highlight", ToggleHighlight),
-                _textColorButton,
-                _clearFormattingButton,
-                CreateSeparator(),
-                CreateFormattingButton(
-                    LucideIconKind.TextAlignStart,
-                    "Align left",
-                    () => _editor.SetTextAlignment(TextAlignment.Left)),
-                CreateFormattingButton(
-                    LucideIconKind.TextAlignCenter,
-                    "Align center",
-                    () => _editor.SetTextAlignment(TextAlignment.Center)),
-                CreateFormattingButton(
-                    LucideIconKind.TextAlignEnd,
-                    "Align right",
-                    () => _editor.SetTextAlignment(TextAlignment.Right))
-            }
-        };
 
         View = new Border
         {
             MinHeight = 43,
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Child = toolbar
+            Child = BuildToolbar()
         };
 
         _editor.SelectionChanged += (_, _) => SyncFromCaret();
@@ -99,6 +63,15 @@ internal sealed class EditorFormattingToolbar
     }
 
     public Border View { get; }
+
+    public void ApplyCopy(EditorCopy copy)
+    {
+        _copy = copy;
+        _separators.Clear();
+        View.Child = BuildToolbar();
+        ApplyPalette();
+        SyncFromCaret();
+    }
 
     public void ApplyPalette()
     {
@@ -123,14 +96,58 @@ internal sealed class EditorFormattingToolbar
         _clearFormattingButton.IsEnabled = RichEditorFormattingAdapter.HasSelection(_editor);
     }
 
+    private StackPanel BuildToolbar()
+    {
+        _textColorButton = CreateIconButton(LucideIconKind.Palette, _copy.TextColor);
+        AttachTextColorMenu(_textColorButton);
+        _clearFormattingButton = CreateFormattingButton(
+            LucideIconKind.RemoveFormatting,
+            _copy.ClearFormatting,
+            ClearSelectedFormatting);
+
+        return new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 3,
+            Margin = new Thickness(10, 5),
+            Children =
+            {
+                CreateFormattingButton(LucideIconKind.Undo2, _copy.Undo, _editor.Undo),
+                CreateFormattingButton(LucideIconKind.Redo2, _copy.Redo, _editor.Redo),
+                CreateSeparator(),
+                CreateFormattingButton(LucideIconKind.Bold, _copy.Bold, _editor.ToggleBold),
+                CreateFormattingButton(LucideIconKind.Italic, _copy.Italic, _editor.ToggleItalic),
+                CreateFormattingButton(LucideIconKind.Highlighter, _copy.Highlight, ToggleHighlight),
+                _textColorButton,
+                _clearFormattingButton,
+                CreateSeparator(),
+                CreateFormattingButton(
+                    LucideIconKind.TextAlignStart,
+                    _copy.AlignLeft,
+                    () => _editor.SetTextAlignment(TextAlignment.Left)),
+                CreateFormattingButton(
+                    LucideIconKind.TextAlignCenter,
+                    _copy.AlignCenter,
+                    () => _editor.SetTextAlignment(TextAlignment.Center)),
+                CreateFormattingButton(
+                    LucideIconKind.TextAlignEnd,
+                    _copy.AlignRight,
+                    () => _editor.SetTextAlignment(TextAlignment.Right))
+            }
+        };
+    }
+
     private void AttachTextColorMenu(Button button)
     {
         var menu = new MenuFlyout();
-        AddTextColorMenuItem(menu, "Automatic", _getAutomaticTextBrush, isAutomatic: true);
+        AddTextColorMenuItem(menu, _copy.Automatic, _getAutomaticTextBrush, isAutomatic: true);
 
-        foreach (var (label, color) in TextColorOptions)
+        foreach (var (key, color) in TextColorOptions)
         {
-            AddTextColorMenuItem(menu, label, () => new SolidColorBrush(Color.Parse(color)));
+            AddTextColorMenuItem(
+                menu,
+                _copy.TextColors[key],
+                () => new SolidColorBrush(Color.Parse(color)));
         }
 
         FlyoutBase.SetAttachedFlyout(button, menu);

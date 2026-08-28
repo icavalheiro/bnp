@@ -18,6 +18,10 @@
 
     <ItemGroup>
         <AvaloniaResource Include="Assets\BNP.ico" />
+        <EmbeddedResource Include="Localization\copy.*.json">
+            <WithCulture>false</WithCulture>
+            <LogicalName>BNP.Localization.%(Filename)%(Extension)</LogicalName>
+        </EmbeddedResource>
     </ItemGroup>
 
     <ItemGroup>

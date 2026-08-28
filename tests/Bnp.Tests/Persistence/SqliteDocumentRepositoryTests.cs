@@ -16,7 +16,7 @@ public sealed class SqliteDocumentRepositoryTests
             Guid createdId;
             using (var repository = new SqliteDocumentRepository(databasePath))
             {
-                var initialWorkspace = repository.Initialize();
+                var initialWorkspace = repository.Initialize("Welcome", "Welcome to BNP.");
                 Assert.Single(initialWorkspace.Documents);
                 Assert.Equal("Welcome", initialWorkspace.ActiveDocument.Title);
 
@@ -30,11 +30,12 @@ public sealed class SqliteDocumentRepositoryTests
                 repository.SaveDocument(created);
                 repository.SetActiveDocument(created.Id);
                 repository.SetSidebarCollapsed(true);
+                repository.SetEditorPreferences("dark", "pt");
                 createdId = created.Id;
             }
 
             using var restoredRepository = new SqliteDocumentRepository(databasePath);
-            var restoredWorkspace = restoredRepository.Initialize();
+            var restoredWorkspace = restoredRepository.Initialize("Welcome", "Welcome to BNP.");
 
             Assert.Equal(2, restoredWorkspace.Documents.Count);
             Assert.Equal(createdId, restoredWorkspace.ActiveDocument.Id);
@@ -43,6 +44,8 @@ public sealed class SqliteDocumentRepositoryTests
             Assert.Equal("#C43D4F", restoredWorkspace.ActiveDocument.ColorKey);
             Assert.Equal(DocumentFormats.AvaloniaRichEditorJsonV1, restoredWorkspace.ActiveDocument.ContentFormat);
             Assert.True(restoredWorkspace.IsSidebarCollapsed);
+            Assert.Equal("dark", restoredWorkspace.ThemeKey);
+            Assert.Equal("pt", restoredWorkspace.LanguageKey);
         }
         finally
         {
@@ -62,7 +65,7 @@ public sealed class SqliteDocumentRepositoryTests
         try
         {
             using var repository = new SqliteDocumentRepository(databasePath);
-            repository.Initialize();
+            repository.Initialize("Welcome", "Welcome to BNP.");
             var now = DateTimeOffset.UtcNow;
             var unknown = new DocumentRecord(
                 Guid.NewGuid(),
