@@ -457,7 +457,7 @@ public sealed class MainWindow : Window, IDisposable
                 CreateFormattingButton(
                     LucideIconKind.Highlighter,
                     "Highlight",
-                    () => _editor.SetHighlight(_palette.Highlight)),
+                    ToggleHighlight),
                 _textColorButton,
                 CreateToolbarSeparator(),
                 CreateFormattingButton(
@@ -950,6 +950,13 @@ public sealed class MainWindow : Window, IDisposable
             _editor.SetForeground(GetActiveTextBrush());
             UpdateTextColorButton();
         });
+    }
+
+    private void ToggleHighlight()
+    {
+        var background = _editor.GetCaretFormat().Background;
+        var isHighlighted = background is SolidColorBrush { Color.A: > 0 };
+        _editor.SetHighlight(isHighlighted ? Brushes.Transparent : _palette.Highlight);
     }
 
     private void SyncTextColorFromCaret()
