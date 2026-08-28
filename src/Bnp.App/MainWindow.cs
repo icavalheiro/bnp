@@ -6,6 +6,8 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Styling;
 using AvaloniaRichEditor.Controls;
 using AvaloniaRichEditor.Documents;
@@ -69,6 +71,7 @@ public sealed class MainWindow : Window, IDisposable
         _autosave = new AutosaveCoordinator(repository, TimeSpan.FromMilliseconds(350));
 
         Title = "BNP";
+        Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://BNP/Assets/BNP.ico")));
         Width = 1100;
         Height = 720;
         MinWidth = 720;
@@ -204,10 +207,10 @@ public sealed class MainWindow : Window, IDisposable
         _titleDisplay.IsHitTestVisible = false;
         AutomationProperties.SetName(_titleDisplay, "Current document title");
 
-        _brandText.Text = "BNP";
-        _brandText.FontSize = 14;
-        _brandText.FontWeight = FontWeight.SemiBold;
-        _brandText.VerticalAlignment = VerticalAlignment.Center;
+        // _brandText.Text = "BNP";
+        // _brandText.FontSize = 14;
+        // _brandText.FontWeight = FontWeight.SemiBold;
+        // _brandText.VerticalAlignment = VerticalAlignment.Center;
 
         var brand = new StackPanel
         {
@@ -217,8 +220,14 @@ public sealed class MainWindow : Window, IDisposable
             Children =
             {
                 collapseButton,
-                // BnpIcons.Create(LucideIconKind.NotebookPen, 19),
-                _brandText
+                new Image
+                {
+                    Source = new Bitmap(AssetLoader.Open(new Uri("avares://BNP/Assets/BNP.ico"))),
+                    Width = 19,
+                    Height = 19,
+                    Stretch = Stretch.Uniform
+                },
+                // _brandText
             }
         };
         var captionButtons = BuildCaptionButtons();

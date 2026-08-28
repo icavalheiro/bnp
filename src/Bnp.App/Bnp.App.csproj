@@ -4,6 +4,7 @@
         <TargetFramework>net10.0</TargetFramework>
         <RootNamespace>Bnp</RootNamespace>
         <AssemblyName>BNP</AssemblyName>
+        <ApplicationIcon>Assets\BNP.ico</ApplicationIcon>
         <IsAotCompatible>true</IsAotCompatible>
         <PublishAot>true</PublishAot>
         <PublishSelfContained>true</PublishSelfContained>
@@ -13,6 +14,10 @@
 
     <ItemGroup>
         <ProjectReference Include="..\Bnp.Core\Bnp.Core.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <AvaloniaResource Include="Assets\BNP.ico" />
     </ItemGroup>
 
     <ItemGroup>
