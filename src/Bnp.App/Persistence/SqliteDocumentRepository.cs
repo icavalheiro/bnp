@@ -158,6 +158,27 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         command.ExecuteNonQuery();
     }
 
+    public void CreateBackup(string destinationPath)
+    {
+        EnsureInitialized();
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
+
+        var directory = Path.GetDirectoryName(destinationPath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        using var destination = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = destinationPath,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            Pooling = false
+        }.ToString());
+        destination.Open();
+        _connection.BackupDatabase(destination);
+    }
+
     public void Dispose()
     {
         _connection.Dispose();

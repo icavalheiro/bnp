@@ -88,4 +88,32 @@ public sealed class SqliteDocumentRepositoryTests
             }
         }
     }
+
+    [Fact]
+    public void CreateBackupProducesRestorableSnapshotWhileRepositoryIsOpen()
+    {
+        var testDirectory = Path.Combine(Path.GetTempPath(), "bnp-tests", Guid.NewGuid().ToString("N"));
+        var databasePath = Path.Combine(testDirectory, "library.db");
+        var backupPath = Path.Combine(testDirectory, "backups", "library.db");
+
+        try
+        {
+            using var repository = new SqliteDocumentRepository(databasePath);
+            repository.Initialize("Welcome", "Welcome to BNP.");
+            var created = repository.CreateDocument("Backed up document");
+
+            repository.CreateBackup(backupPath);
+
+            using var restoredRepository = new SqliteDocumentRepository(backupPath);
+            var workspace = restoredRepository.Initialize("Other", "Other content");
+            Assert.Contains(workspace.Documents, document => document.Id == created.Id);
+        }
+        finally
+        {
+            if (Directory.Exists(testDirectory))
+            {
+                Directory.Delete(testDirectory, recursive: true);
+            }
+        }
+    }
 }
