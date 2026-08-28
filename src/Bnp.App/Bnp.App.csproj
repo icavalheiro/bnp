@@ -18,6 +18,7 @@
 
     <ItemGroup>
         <AvaloniaResource Include="Assets\BNP.ico" />
+        <AvaloniaResource Include="..\..\fonts\Inconsolata.ttf" Link="Assets\Fonts\Inconsolata.ttf" />
         <EmbeddedResource Include="Localization\copy.*.json">
             <WithCulture>false</WithCulture>
             <LogicalName>BNP.Localization.%(Filename)%(Extension)</LogicalName>

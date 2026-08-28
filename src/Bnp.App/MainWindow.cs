@@ -3,6 +3,7 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform;
@@ -19,6 +20,8 @@ namespace Bnp;
 
 public sealed class MainWindow : Window, IDisposable
 {
+    private const double EditorFontSizePoints = 11.25;
+
     private readonly IDocumentRepository _repository;
     private readonly AutosaveCoordinator _autosave;
     private readonly List<DocumentSummary> _documents;
@@ -144,7 +147,8 @@ public sealed class MainWindow : Window, IDisposable
         _editor.AllowTables = false;
         _editor.AllowLocalFileImages = false;
         _editor.AllowRemoteImagesOnPaste = false;
-        _editor.DefaultFontSize = 12;
+        _editor.DefaultFontFamily = new FontFamily("avares://BNP/Assets/Fonts#Inconsolata");
+        _editor.DefaultFontSize = EditorFontSizePoints;
         AutomationProperties.SetName(_editor, _copy.DocumentEditor);
     }
 
@@ -386,6 +390,7 @@ public sealed class MainWindow : Window, IDisposable
     {
         _editor.TextChanged += (_, _) =>
         {
+            ApplyDocumentTextTheme();
             if (!_isLoadingDocument)
             {
                 _autosave.Queue(CreateCurrentSnapshot);
@@ -402,7 +407,11 @@ public sealed class MainWindow : Window, IDisposable
             };
         };
         _documentList.SelectionChanged += (_, _) => SwitchToSelectedDocument();
-        KeyDown += OnWindowKeyDown;
+        AddHandler(
+            InputElement.KeyDownEvent,
+            OnWindowKeyDown,
+            RoutingStrategies.Tunnel,
+            handledEventsToo: true);
     }
 
     private void CreateDocument()
@@ -491,7 +500,12 @@ public sealed class MainWindow : Window, IDisposable
             return;
         }
 
-        if (eventArgs.Key == Key.N)
+        if (eventArgs.Key == Key.B && eventArgs.KeyModifiers == KeyModifiers.Control)
+        {
+            _chrome.ToggleSidebar();
+            eventArgs.Handled = true;
+        }
+        else if (eventArgs.Key == Key.N)
         {
             CreateDocument();
             eventArgs.Handled = true;

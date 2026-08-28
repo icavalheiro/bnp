@@ -185,6 +185,15 @@ internal sealed class EditorFormattingToolbar
 
     private void OnEditorKeyDown(object? sender, KeyEventArgs eventArgs)
     {
+        if (eventArgs.Key == Key.Space &&
+            eventArgs.KeyModifiers == KeyModifiers.Control &&
+            RichEditorFormattingAdapter.HasSelection(_editor))
+        {
+            ClearSelectedFormatting();
+            eventArgs.Handled = true;
+            return;
+        }
+
         if (eventArgs.Key != Key.Enter || eventArgs.KeyModifiers.HasFlag(KeyModifiers.Shift))
         {
             return;

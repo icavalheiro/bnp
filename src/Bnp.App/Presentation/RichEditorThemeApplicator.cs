@@ -6,6 +6,10 @@ namespace Bnp.Presentation;
 
 internal static class RichEditorThemeApplicator
 {
+    private const double DefaultParagraphMarginBottom = 10;
+    private const double CurrentParagraphMarginBottom = 6;
+    private const double LegacyParagraphMarginBottom = 1;
+
     public static void Apply(RichEditor editor, IBrush automaticTextBrush)
     {
         if (editor.Document is not { } document)
@@ -19,6 +23,25 @@ internal static class RichEditorThemeApplicator
         }
 
         editor.InvalidateVisual();
+    }
+
+    public static void NormalizeParagraphSpacing(RichEditor editor)
+    {
+        if (editor.Document is not { } document)
+        {
+            return;
+        }
+
+        var spacingChanged = false;
+        foreach (var block in document.Blocks)
+        {
+            spacingChanged |= NormalizeBlockSpacing(block);
+        }
+
+        if (spacingChanged)
+        {
+            editor.InvalidateVisual();
+        }
     }
 
     public static bool UsesAutomaticTextColor(IBrush? brush)
@@ -38,17 +61,18 @@ internal static class RichEditorThemeApplicator
     {
         if (block is Paragraph paragraph)
         {
-            if (Math.Abs(paragraph.MarginBottom - 10) < 0.01)
-            {
-                paragraph.MarginBottom = 1;
-            }
+            NormalizeParagraphSpacing(paragraph);
 
             foreach (var inline in paragraph.Inlines)
             {
-                if (inline is AvaloniaRichEditor.Documents.Run run &&
-                    UsesAutomaticTextColor(run.Foreground))
+                if (inline is AvaloniaRichEditor.Documents.Run run)
                 {
-                    run.Foreground = automaticTextBrush;
+                    run.FontFamily = null;
+                    run.FontSize = 0;
+                    if (UsesAutomaticTextColor(run.Foreground))
+                    {
+                        run.Foreground = automaticTextBrush;
+                    }
                 }
                 else if (inline is InlineTable inlineTable)
                 {
@@ -60,6 +84,46 @@ internal static class RichEditorThemeApplicator
         {
             ApplyTable(table, automaticTextBrush);
         }
+    }
+
+    private static bool NormalizeBlockSpacing(Block block)
+    {
+        if (block is Paragraph paragraph)
+        {
+            return NormalizeParagraphSpacing(paragraph);
+        }
+
+        if (block is not TableBlock table)
+        {
+            return false;
+        }
+
+        var spacingChanged = false;
+        foreach (var row in table.Cells)
+        {
+            foreach (var cell in row)
+            {
+                foreach (var cellBlock in cell.Blocks)
+                {
+                    spacingChanged |= NormalizeBlockSpacing(cellBlock);
+                }
+            }
+        }
+
+        return spacingChanged;
+    }
+
+    private static bool NormalizeParagraphSpacing(Paragraph paragraph)
+    {
+        if (Math.Abs(paragraph.MarginBottom - DefaultParagraphMarginBottom) >= 0.01 &&
+            Math.Abs(paragraph.MarginBottom - CurrentParagraphMarginBottom) >= 0.01 &&
+            Math.Abs(paragraph.MarginBottom - LegacyParagraphMarginBottom) >= 0.01)
+        {
+            return false;
+        }
+
+        paragraph.MarginBottom = 0;
+        return true;
     }
 
     private static void ApplyTable(TableBlock table, IBrush automaticTextBrush)

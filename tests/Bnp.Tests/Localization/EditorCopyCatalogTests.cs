@@ -23,6 +23,8 @@ public sealed class EditorCopyCatalogTests
         Assert.Equal(8, copy.TextColors.Count);
         Assert.Equal(10, copy.DocumentColors.Count);
         Assert.Equal(70, copy.DocumentIcons.Count);
+        Assert.Contains("Ctrl + Space", copy.ClearFormatting, StringComparison.Ordinal);
+        Assert.Contains("Ctrl + B", copy.ToggleDocumentSidebar, StringComparison.Ordinal);
 
         var english = EditorCopyCatalog.Load(CultureInfo.GetCultureInfo("en-US"));
         Assert.Equal(

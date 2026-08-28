@@ -59,6 +59,13 @@ internal sealed class MainWindowChrome
         _titleDisplay.Text = title;
     }
 
+    public void ToggleSidebar()
+    {
+        var isCollapsed = _toggleSidebar();
+        _collapseButton.Content = BnpIcons.Create(
+            isCollapsed ? LucideIconKind.PanelLeftOpen : LucideIconKind.PanelLeftClose);
+    }
+
     public void AddResizeZones(Grid rootLayout)
     {
         AddResizeZone(rootLayout, WindowEdge.North, HorizontalAlignment.Stretch,
@@ -140,12 +147,7 @@ internal sealed class MainWindowChrome
             _collapseButton,
             isSidebarCollapsed ? LucideIconKind.PanelLeftOpen : LucideIconKind.PanelLeftClose,
             _getCopy().ToggleDocumentSidebar);
-        _collapseButton.Click += (_, _) =>
-        {
-            var isCollapsed = _toggleSidebar();
-            _collapseButton.Content = BnpIcons.Create(
-                isCollapsed ? LucideIconKind.PanelLeftOpen : LucideIconKind.PanelLeftClose);
-        };
+        _collapseButton.Click += (_, _) => ToggleSidebar();
 
         _titleDisplay.Width = 360;
         _titleDisplay.MinWidth = 180;
