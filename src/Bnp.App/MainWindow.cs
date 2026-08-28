@@ -33,6 +33,20 @@ public sealed class MainWindow : Window, IDisposable
         ("Gray", "#616161")
     ];
 
+    private static readonly (string Label, string Color)[] DocumentColorOptions =
+    [
+        ("Slate", "#5B6B82"),
+        ("Red", "#C43D4F"),
+        ("Orange", "#D56A28"),
+        ("Gold", "#B88718"),
+        ("Green", "#31875B"),
+        ("Teal", "#25858A"),
+        ("Blue", "#3678C8"),
+        ("Indigo", "#575BC7"),
+        ("Purple", "#8A4FB0"),
+        ("Pink", "#C04F82")
+    ];
+
     private readonly IDocumentRepository _repository;
     private readonly AutosaveCoordinator _autosave;
     private readonly List<DocumentSummary> _documents;
@@ -374,14 +388,11 @@ public sealed class MainWindow : Window, IDisposable
         var addButton = CreateIconButton(LucideIconKind.Plus, "New document");
         addButton.Click += (_, _) => CreateDocument();
 
-        var iconButton = CreateIconButton(LucideIconKind.Palette, "Choose document icon");
-        AttachIconMenu(iconButton);
-
         var actions = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 4,
-            Children = { iconButton, addButton }
+            Children = { addButton }
         };
         _sidebarTitle.Text = "Documents";
         _sidebarTitle.FontSize = 12;
@@ -501,17 +512,27 @@ public sealed class MainWindow : Window, IDisposable
 
     private ListBoxItem CreateDocumentListItem(DocumentSummary document)
     {
-        var titleEditor = new TextBox
+        var documentIcon = BnpIcons.CreateDocumentIcon(document.IconKey, document.ColorKey);
+        var title = new TextBlock
         {
             Text = document.Title,
-            Tag = document.Id,
-            Padding = new Thickness(2, 0),
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Stretch
+            TextTrimming = TextTrimming.CharacterEllipsis
         };
-        AutomationProperties.SetName(titleEditor, $"Rename {document.Title}");
+        var settingsButton = CreateIconButton(LucideIconKind.Settings, $"Configure {document.Title}");
+        settingsButton.Width = 28;
+        settingsButton.Height = 28;
+        settingsButton.Padding = new Thickness(5);
+        settingsButton.IsVisible = false;
+
+        var content = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
+            ColumnSpacing = 9,
+            Children = { documentIcon, title, settingsButton }
+        };
+        Grid.SetColumn(title, 1);
+        Grid.SetColumn(settingsButton, 2);
 
         var item = new ListBoxItem
         {
@@ -520,21 +541,251 @@ public sealed class MainWindow : Window, IDisposable
             Margin = new Thickness(6, 2),
             Padding = new Thickness(8, 6),
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            Content = new StackPanel
+            Content = content
+        };
+        var settingsFlyout = CreateDocumentSettingsFlyout(document);
+        FlyoutBase.SetAttachedFlyout(settingsButton, settingsFlyout);
+        settingsButton.Click += (_, eventArgs) =>
+        {
+            _documentList.SelectedItem = item;
+            FlyoutBase.ShowAttachedFlyout(settingsButton);
+            eventArgs.Handled = true;
+        };
+        item.PointerEntered += (_, _) => settingsButton.IsVisible = true;
+        item.PointerExited += (_, _) => settingsButton.IsVisible = false;
+        return item;
+    }
+
+    private Flyout CreateDocumentSettingsFlyout(DocumentSummary document)
+    {
+        var selectedIconKey = document.IconKey;
+        var selectedColorKey = document.ColorKey;
+        var titleEditor = new TextBox
+        {
+            Text = document.Title,
+            MinWidth = 310,
+            MaxLength = 120
+        };
+        AutomationProperties.SetName(titleEditor, "Document name");
+
+        var preview = new Button
+        {
+            Content = BnpIcons.CreateDocumentIcon(selectedIconKey, selectedColorKey, 22),
+            Width = 40,
+            Height = 40,
+            Padding = new Thickness(8),
+            IsHitTestVisible = false,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
+
+        var iconButtons = new List<(Button Button, string Key)>();
+        var iconPanel = new WrapPanel
+        {
+            Orientation = Orientation.Horizontal,
+            ItemWidth = 36,
+            ItemHeight = 36
+        };
+        foreach (var option in BnpIcons.DocumentIcons)
+        {
+            var iconButton = CreateIconButton(option.Kind, option.Label);
+            iconButton.Width = 34;
+            iconButton.Height = 34;
+            iconButton.Padding = new Thickness(7);
+            iconButtons.Add((iconButton, option.Key));
+            iconPanel.Children.Add(iconButton);
+            iconButton.Click += (_, _) =>
             {
-                Orientation = Orientation.Horizontal,
-                Spacing = 9,
-                Children =
+                selectedIconKey = option.Key;
+                preview.Content = BnpIcons.CreateDocumentIcon(selectedIconKey, selectedColorKey, 22);
+                RefreshIconSelection();
+            };
+        }
+
+        var colorButtons = new List<(Button Button, string Color)>();
+        var colorPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 7
+        };
+        foreach (var (label, color) in DocumentColorOptions)
+        {
+            var colorButton = new Button
+            {
+                Width = 25,
+                Height = 25,
+                Padding = new Thickness(4),
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Content = new Border
                 {
-                    BnpIcons.CreateDocumentIcon(document.IconKey),
-                    titleEditor
+                    Width = 15,
+                    Height = 15,
+                    Background = new SolidColorBrush(Color.Parse(color)),
+                    CornerRadius = new CornerRadius(3)
                 }
+            };
+            ToolTip.SetTip(colorButton, label);
+            AutomationProperties.SetName(colorButton, label);
+            colorButtons.Add((colorButton, color));
+            colorPanel.Children.Add(colorButton);
+            colorButton.Click += (_, _) =>
+            {
+                selectedColorKey = color;
+                preview.Content = BnpIcons.CreateDocumentIcon(selectedIconKey, selectedColorKey, 22);
+                RefreshColorSelection();
+            };
+        }
+
+        var flyout = new Flyout();
+        var cancelButton = new Button { Content = "Cancel" };
+        var saveButton = new Button { Content = "Save" };
+        cancelButton.Click += (_, _) => flyout.Hide();
+        saveButton.Click += (_, _) =>
+        {
+            if (SaveDocumentSettings(document.Id, titleEditor.Text, selectedIconKey, selectedColorKey))
+            {
+                flyout.Hide();
+            }
+            else
+            {
+                titleEditor.Focus();
             }
         };
-        titleEditor.GotFocus += (_, _) => _documentList.SelectedItem = item;
-        titleEditor.LostFocus += (_, _) => RenameDocument(document.Id, titleEditor);
-        titleEditor.KeyDown += (_, eventArgs) => OnTitleEditorKeyDown(document.Id, titleEditor, eventArgs);
-        return item;
+        titleEditor.KeyDown += (_, eventArgs) =>
+        {
+            if (eventArgs.Key == Key.Enter)
+            {
+                saveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                eventArgs.Handled = true;
+            }
+            else if (eventArgs.Key == Key.Escape)
+            {
+                flyout.Hide();
+                eventArgs.Handled = true;
+            }
+        };
+
+        var header = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = "Document settings",
+                    FontSize = 15,
+                    FontWeight = FontWeight.SemiBold,
+                    VerticalAlignment = VerticalAlignment.Center
+                },
+                preview
+            }
+        };
+        Grid.SetColumn(preview, 1);
+
+        var footer = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Children = { cancelButton, saveButton }
+        };
+        flyout.Content = new StackPanel
+        {
+            Width = 330,
+            Spacing = 10,
+            Children =
+            {
+                header,
+                new TextBlock { Text = "Name", FontSize = 12, FontWeight = FontWeight.SemiBold },
+                titleEditor,
+                new TextBlock { Text = "Icon", FontSize = 12, FontWeight = FontWeight.SemiBold },
+                new ScrollViewer
+                {
+                    Content = iconPanel,
+                    Height = 180,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+                },
+                new TextBlock { Text = "Color", FontSize = 12, FontWeight = FontWeight.SemiBold },
+                colorPanel,
+                footer
+            }
+        };
+        flyout.Opened += (_, _) =>
+        {
+            titleEditor.SelectAll();
+            titleEditor.Focus();
+        };
+        RefreshIconSelection();
+        RefreshColorSelection();
+        return flyout;
+
+        void RefreshIconSelection()
+        {
+            foreach (var (button, key) in iconButtons)
+            {
+                button.Background = key == selectedIconKey ? _palette.Selection : Brushes.Transparent;
+            }
+        }
+
+        void RefreshColorSelection()
+        {
+            foreach (var (button, color) in colorButtons)
+            {
+                button.BorderBrush = color == selectedColorKey ? _palette.PrimaryText : _palette.Border;
+                button.BorderThickness = color == selectedColorKey ? new Thickness(2) : new Thickness(1);
+            }
+        }
+    }
+
+    private bool SaveDocumentSettings(
+        Guid documentId,
+        string? titleValue,
+        string iconKey,
+        string colorKey)
+    {
+        var title = titleValue?.Trim();
+        if (string.IsNullOrEmpty(title))
+        {
+            return false;
+        }
+
+        _autosave.Flush();
+        var document = documentId == _currentDocument.Id
+            ? _currentDocument
+            : _repository.GetDocument(documentId);
+        if (document is null)
+        {
+            _saveStatus.Text = "Document unavailable";
+            return false;
+        }
+
+        var updatedDocument = document with
+        {
+            Title = title,
+            IconKey = iconKey,
+            ColorKey = colorKey,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        _repository.SaveDocument(updatedDocument);
+        if (documentId == _currentDocument.Id)
+        {
+            _currentDocument = updatedDocument;
+            _titleDisplay.Text = title;
+            Title = $"BNP - {title}";
+        }
+
+        var index = _documents.FindIndex(summary => summary.Id == documentId);
+        if (index >= 0)
+        {
+            _documents[index] = ToSummary(updatedDocument);
+        }
+
+        PopulateDocumentList();
+        _saveStatus.Text = "Saved";
+        return true;
     }
 
     private void AttachEvents()
@@ -638,81 +889,6 @@ public sealed class MainWindow : Window, IDisposable
         return _currentDocument;
     }
 
-    private void RenameDocument(Guid documentId, TextBox titleEditor)
-    {
-        var index = _documents.FindIndex(document => document.Id == documentId);
-        if (index < 0)
-        {
-            return;
-        }
-
-        var currentTitle = _documents[index].Title;
-        var title = titleEditor.Text?.Trim();
-        if (string.IsNullOrEmpty(title))
-        {
-            titleEditor.Text = currentTitle;
-            return;
-        }
-
-        if (title == currentTitle)
-        {
-            return;
-        }
-
-        var now = DateTimeOffset.UtcNow;
-        _documents[index] = _documents[index] with { Title = title, UpdatedAt = now };
-        titleEditor.Text = title;
-        AutomationProperties.SetName(titleEditor, $"Rename {title}");
-
-        if (documentId == _currentDocument.Id)
-        {
-            _currentDocument = _currentDocument with { Title = title, UpdatedAt = now };
-            _titleDisplay.Text = title;
-            Title = $"BNP - {title}";
-            _autosave.Queue(CreateCurrentSnapshot);
-            return;
-        }
-
-        var document = _repository.GetDocument(documentId);
-        if (document is not null)
-        {
-            _repository.SaveDocument(document with { Title = title, UpdatedAt = now });
-        }
-    }
-
-    private void OnTitleEditorKeyDown(Guid documentId, TextBox titleEditor, KeyEventArgs eventArgs)
-    {
-        if (eventArgs.Key == Key.Enter)
-        {
-            RenameDocument(documentId, titleEditor);
-            _editor.Focus();
-            eventArgs.Handled = true;
-        }
-        else if (eventArgs.Key == Key.Escape)
-        {
-            var document = _documents.Find(document => document.Id == documentId);
-            if (document is not null)
-            {
-                titleEditor.Text = document.Title;
-            }
-
-            _editor.Focus();
-            eventArgs.Handled = true;
-        }
-    }
-
-    private void AttachIconMenu(Button button)
-    {
-        var menu = new MenuFlyout();
-        AddIconMenuItem(menu, "Document", "file-text", LucideIconKind.FileText);
-        AddIconMenuItem(menu, "Notebook", "notebook", LucideIconKind.NotebookTabs);
-        AddIconMenuItem(menu, "Idea", "idea", LucideIconKind.Lightbulb);
-        AddIconMenuItem(menu, "Favorite", "favorite", LucideIconKind.Star);
-        AddIconMenuItem(menu, "To-do", "todo", LucideIconKind.ListChecks);
-        FlyoutBase.SetAttachedFlyout(button, menu);
-        button.Click += (_, _) => FlyoutBase.ShowAttachedFlyout(button);
-    }
-
     private void AttachTextColorMenu(Button button)
     {
         var menu = new MenuFlyout();
@@ -794,44 +970,6 @@ public sealed class MainWindow : Window, IDisposable
         {
             _textColorButton.Foreground = GetActiveTextBrush();
         }
-    }
-
-    private void AddIconMenuItem(
-        MenuFlyout menu,
-        string label,
-        string iconKey,
-        LucideIconKind iconKind)
-    {
-        var item = new MenuItem
-        {
-            Header = label,
-            Icon = BnpIcons.Create(iconKind, 16)
-        };
-        item.Click += (_, _) => SetCurrentDocumentIcon(iconKey);
-        menu.Items.Add(item);
-    }
-
-    private void SetCurrentDocumentIcon(string iconKey)
-    {
-        if (_currentDocument.IconKey == iconKey)
-        {
-            return;
-        }
-
-        _currentDocument = _currentDocument with { IconKey = iconKey };
-        ReplaceCurrentSummary();
-        _autosave.Queue(CreateCurrentSnapshot);
-    }
-
-    private void ReplaceCurrentSummary()
-    {
-        var index = _documents.FindIndex(document => document.Id == _currentDocument.Id);
-        if (index >= 0)
-        {
-            _documents[index] = ToSummary(_currentDocument);
-        }
-
-        PopulateDocumentList();
     }
 
     private void OnWindowKeyDown(object? sender, KeyEventArgs eventArgs)
@@ -1033,6 +1171,7 @@ public sealed class MainWindow : Window, IDisposable
             document.Id,
             document.Title,
             document.IconKey,
+            document.ColorKey,
             document.TabOrder,
             document.UpdatedAt);
     }

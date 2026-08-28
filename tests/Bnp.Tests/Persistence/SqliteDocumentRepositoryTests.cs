@@ -22,6 +22,7 @@ public sealed class SqliteDocumentRepositoryTests
 
                 var created = repository.CreateDocument("Architecture", "idea") with
                 {
+                    ColorKey = "#C43D4F",
                     ContentFormat = DocumentFormats.AvaloniaRichEditorJsonV1,
                     Content = "{\"version\":1,\"blocks\":[]}",
                     UpdatedAt = DateTimeOffset.UtcNow
@@ -39,6 +40,7 @@ public sealed class SqliteDocumentRepositoryTests
             Assert.Equal(createdId, restoredWorkspace.ActiveDocument.Id);
             Assert.Equal("Architecture", restoredWorkspace.ActiveDocument.Title);
             Assert.Equal("idea", restoredWorkspace.ActiveDocument.IconKey);
+            Assert.Equal("#C43D4F", restoredWorkspace.ActiveDocument.ColorKey);
             Assert.Equal(DocumentFormats.AvaloniaRichEditorJsonV1, restoredWorkspace.ActiveDocument.ContentFormat);
             Assert.True(restoredWorkspace.IsSidebarCollapsed);
         }
@@ -66,6 +68,7 @@ public sealed class SqliteDocumentRepositoryTests
                 Guid.NewGuid(),
                 "Unknown",
                 "file-text",
+                "#5B6B82",
                 DocumentFormats.PlainTextV1,
                 string.Empty,
                 99,

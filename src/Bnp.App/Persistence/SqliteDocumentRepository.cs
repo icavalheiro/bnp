@@ -6,6 +6,8 @@ namespace Bnp.Persistence;
 
 public sealed class SqliteDocumentRepository : IDocumentRepository
 {
+    private const string DefaultDocumentColor = "#5B6B82";
+
     private readonly SqliteConnection _connection;
     private bool _isInitialized;
 
@@ -55,6 +57,7 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
             Guid.NewGuid(),
             title.Trim(),
             iconKey,
+            DefaultDocumentColor,
             DocumentFormats.PlainTextV1,
             string.Empty,
             GetNextTabOrder(),
@@ -70,7 +73,7 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         EnsureInitialized();
         using var command = _connection.CreateCommand();
         command.CommandText = """
-            SELECT id, title, icon_key, content_format, content, tab_order, created_at, updated_at
+            SELECT id, title, icon_key, color_key, content_format, content, tab_order, created_at, updated_at
             FROM documents
             WHERE id = $id;
             """;
@@ -90,6 +93,7 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
             UPDATE documents
             SET title = $title,
                 icon_key = $iconKey,
+                color_key = $colorKey,
                 content_format = $contentFormat,
                 content = $content,
                 tab_order = $tabOrder,
@@ -152,7 +156,13 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
             version = 1;
         }
 
-        if (version != 1)
+        if (version == 1)
+        {
+            Migration002.Apply(_connection);
+            version = 2;
+        }
+
+        if (version != 2)
         {
             throw new NotSupportedException($"Database schema version {version} is not supported.");
         }
@@ -172,6 +182,7 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
             Guid.NewGuid(),
             "Welcome",
             "file-text",
+            DefaultDocumentColor,
             DocumentFormats.PlainTextV1,
             "Welcome to BNP.",
             0,
@@ -198,7 +209,7 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         using (var command = _connection.CreateCommand())
         {
             command.CommandText = """
-                SELECT id, title, icon_key, tab_order, updated_at
+                SELECT id, title, icon_key, color_key, tab_order, updated_at
                 FROM documents
                 ORDER BY tab_order;
                 """;
@@ -209,8 +220,9 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
                     Guid.Parse(reader.GetString(0)),
                     reader.GetString(1),
                     reader.GetString(2),
-                    reader.GetInt32(3),
-                    DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(4))));
+                    reader.GetString(3),
+                    reader.GetInt32(4),
+                    DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(5))));
             }
         }
 
@@ -244,9 +256,9 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         command.Transaction = transaction;
         command.CommandText = """
             INSERT INTO documents(
-                id, title, icon_key, content_format, content, tab_order, created_at, updated_at)
+                id, title, icon_key, color_key, content_format, content, tab_order, created_at, updated_at)
             VALUES (
-                $id, $title, $iconKey, $contentFormat, $content, $tabOrder, $createdAt, $updatedAt);
+                $id, $title, $iconKey, $colorKey, $contentFormat, $content, $tabOrder, $createdAt, $updatedAt);
             """;
         AddDocumentParameters(command, document);
         command.ExecuteNonQuery();
@@ -282,9 +294,10 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
             reader.GetString(2),
             reader.GetString(3),
             reader.GetString(4),
-            reader.GetInt32(5),
-            DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(6)),
-            DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(7)));
+            reader.GetString(5),
+            reader.GetInt32(6),
+            DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(7)),
+            DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(8)));
     }
 
     private static void AddDocumentParameters(SqliteCommand command, DocumentRecord document)
@@ -292,6 +305,7 @@ public sealed class SqliteDocumentRepository : IDocumentRepository
         command.Parameters.AddWithValue("$id", document.Id.ToString("D"));
         command.Parameters.AddWithValue("$title", document.Title);
         command.Parameters.AddWithValue("$iconKey", document.IconKey);
+        command.Parameters.AddWithValue("$colorKey", document.ColorKey);
         command.Parameters.AddWithValue("$contentFormat", document.ContentFormat);
         command.Parameters.AddWithValue("$content", document.Content);
         command.Parameters.AddWithValue("$tabOrder", document.TabOrder);
