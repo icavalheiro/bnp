@@ -3,7 +3,7 @@
         <OutputType>WinExe</OutputType>
         <TargetFramework>net10.0</TargetFramework>
         <RootNamespace>Bnp</RootNamespace>
-        <AssemblyName>BNP</AssemblyName>
+        <AssemblyName>bnp</AssemblyName>
         <ApplicationIcon>Assets\BNP.ico</ApplicationIcon>
         <IsAotCompatible>true</IsAotCompatible>
         <PublishAot>true</PublishAot>

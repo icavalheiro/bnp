@@ -3,14 +3,11 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
-using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Styling;
 using AvaloniaRichEditor.Controls;
-using AvaloniaRichEditor.Documents;
 using Bnp.Core.Documents;
 using Bnp.Diagnostics;
 using Bnp.Presentation;
@@ -21,55 +18,22 @@ namespace Bnp;
 
 public sealed class MainWindow : Window, IDisposable
 {
-    private static readonly (string Label, string Color)[] TextColorOptions =
-    [
-        ("Red", "#E53935"),
-        ("Orange", "#FB8C00"),
-        ("Yellow", "#FDD835"),
-        ("Green", "#43A047"),
-        ("Teal", "#00897B"),
-        ("Blue", "#1E88E5"),
-        ("Purple", "#8E24AA"),
-        ("Gray", "#616161")
-    ];
-
-    private static readonly (string Label, string Color)[] DocumentColorOptions =
-    [
-        ("Slate", "#5B6B82"),
-        ("Red", "#C43D4F"),
-        ("Orange", "#D56A28"),
-        ("Gold", "#B88718"),
-        ("Green", "#31875B"),
-        ("Teal", "#25858A"),
-        ("Blue", "#3678C8"),
-        ("Indigo", "#575BC7"),
-        ("Purple", "#8A4FB0"),
-        ("Pink", "#C04F82")
-    ];
-
     private readonly IDocumentRepository _repository;
     private readonly AutosaveCoordinator _autosave;
     private readonly List<DocumentSummary> _documents;
     private readonly ListBox _documentList = new();
     private readonly RichEditor _editor = new();
-    private readonly TextBlock _titleDisplay = new();
     private readonly TextBlock _saveStatus = new();
     private readonly Border _sidebar = new();
     private readonly ColumnDefinition _sidebarColumn = new();
     private readonly Border _windowFrame = new();
     private readonly Grid _rootLayout = new();
-    private readonly Border _headerBorder = new();
-    private readonly Border _toolbarBorder = new();
     private readonly ScrollViewer _editorSurface = new();
     private readonly Border _statusBorder = new();
     private readonly TextBlock _sidebarTitle = new();
-    private readonly TextBlock _brandText = new();
-    private readonly Button _minimizeButton = new();
-    private readonly Button _maximizeButton = new();
-    private readonly Button _closeButton = new();
-    private readonly List<Control> _resizeZones = new();
-    private Button? _textColorButton;
-    private IBrush? _activeTextColor;
+    private readonly DocumentSettingsFlyoutFactory _documentSettingsFlyoutFactory;
+    private readonly EditorFormattingToolbar _editorToolbar;
+    private readonly MainWindowChrome _chrome;
     private DocumentRecord _currentDocument;
     private BnpPalette _palette = BnpTheme.GetPalette(ThemeVariant.Light);
     private bool _isLayoutReady;
@@ -83,8 +47,11 @@ public sealed class MainWindow : Window, IDisposable
         _currentDocument = workspace.ActiveDocument;
         _isSidebarCollapsed = workspace.IsSidebarCollapsed;
         _autosave = new AutosaveCoordinator(repository, TimeSpan.FromMilliseconds(350));
+        _documentSettingsFlyoutFactory = new DocumentSettingsFlyoutFactory(
+            () => _palette,
+            SaveDocumentSettings);
 
-        Title = "BNP";
+        Title = "bnp";
         Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://BNP/Assets/BNP.ico")));
         Width = 1100;
         Height = 720;
@@ -102,6 +69,13 @@ public sealed class MainWindow : Window, IDisposable
         Win32Properties.SetWindowCornerPreference(this, Win32Properties.WindowCornerPreference.RoundSmall);
 
         ConfigureEditor();
+        _editorToolbar = new EditorFormattingToolbar(_editor, GetAutomaticTextBrush, () => _palette);
+        _chrome = new MainWindowChrome(
+            this,
+            _windowFrame,
+            () => _palette,
+            ToggleSidebar,
+            _isSidebarCollapsed);
         Content = BuildLayout();
         _isLayoutReady = true;
         ApplyTheme();
@@ -131,7 +105,7 @@ public sealed class MainWindow : Window, IDisposable
         }
         else if (change.Property == WindowStateProperty)
         {
-            ApplyWindowState();
+            _chrome.ApplyWindowState();
         }
     }
 
@@ -164,7 +138,7 @@ public sealed class MainWindow : Window, IDisposable
         _rootLayout.ColumnDefinitions = new ColumnDefinitions { _sidebarColumn, new(GridLength.Star) };
         _rootLayout.RowDefinitions = new RowDefinitions("Auto,*,Auto");
 
-        var header = BuildHeader();
+        var header = _chrome.Header;
         Grid.SetColumnSpan(header, 2);
 
         _sidebar.Child = BuildSidebar();
@@ -185,7 +159,7 @@ public sealed class MainWindow : Window, IDisposable
         _rootLayout.Children.Add(_sidebar);
         _rootLayout.Children.Add(editorArea);
         _rootLayout.Children.Add(status);
-        AddResizeZones();
+        _chrome.AddResizeZones(_rootLayout);
 
         _windowFrame.Child = _rootLayout;
         _windowFrame.CornerRadius = new CornerRadius(8);
@@ -194,193 +168,13 @@ public sealed class MainWindow : Window, IDisposable
         return _windowFrame;
     }
 
-    private Border BuildHeader()
+    private bool ToggleSidebar()
     {
-        var collapseButton = CreateIconButton(
-            _isSidebarCollapsed ? LucideIconKind.PanelLeftOpen : LucideIconKind.PanelLeftClose,
-            "Toggle document sidebar");
-        collapseButton.Click += (_, _) =>
-        {
-            _isSidebarCollapsed = !_isSidebarCollapsed;
-            _sidebar.IsVisible = !_isSidebarCollapsed;
-            _sidebarColumn.Width = _isSidebarCollapsed ? new GridLength(0) : new GridLength(252);
-            collapseButton.Content = BnpIcons.Create(
-                _isSidebarCollapsed ? LucideIconKind.PanelLeftOpen : LucideIconKind.PanelLeftClose);
-            _repository.SetSidebarCollapsed(_isSidebarCollapsed);
-        };
-
-        _titleDisplay.Width = 360;
-        _titleDisplay.MinWidth = 180;
-        _titleDisplay.MaxWidth = 480;
-        _titleDisplay.HorizontalAlignment = HorizontalAlignment.Center;
-        _titleDisplay.TextAlignment = TextAlignment.Center;
-        _titleDisplay.TextTrimming = TextTrimming.CharacterEllipsis;
-        _titleDisplay.FontSize = 14;
-        _titleDisplay.FontWeight = FontWeight.SemiBold;
-        _titleDisplay.VerticalAlignment = VerticalAlignment.Center;
-        _titleDisplay.IsHitTestVisible = false;
-        AutomationProperties.SetName(_titleDisplay, "Current document title");
-
-        // _brandText.Text = "BNP";
-        // _brandText.FontSize = 14;
-        // _brandText.FontWeight = FontWeight.SemiBold;
-        // _brandText.VerticalAlignment = VerticalAlignment.Center;
-
-        var brand = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 9,
-            VerticalAlignment = VerticalAlignment.Center,
-            Children =
-            {
-                collapseButton,
-                new Image
-                {
-                    Source = new Bitmap(AssetLoader.Open(new Uri("avares://BNP/Assets/BNP.ico"))),
-                    Width = 19,
-                    Height = 19,
-                    Stretch = Stretch.Uniform
-                },
-                // _brandText
-            }
-        };
-        var captionButtons = BuildCaptionButtons();
-        var headerLayout = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto,*"),
-            Background = Brushes.Transparent,
-            Children = { brand, _titleDisplay, captionButtons }
-        };
-        Grid.SetColumn(_titleDisplay, 1);
-        Grid.SetColumn(captionButtons, 2);
-        headerLayout.PointerPressed += OnTitleBarPointerPressed;
-
-        _headerBorder.MinHeight = 44;
-        _headerBorder.Padding = new Thickness(8, 0, 0, 0);
-        _headerBorder.BorderThickness = new Thickness(0, 0, 0, 1);
-        _headerBorder.Child = headerLayout;
-        return _headerBorder;
-    }
-
-    private StackPanel BuildCaptionButtons()
-    {
-        ConfigureCaptionButton(_minimizeButton, LucideIconKind.Minus, "Minimize window");
-        _minimizeButton.Click += (_, _) => WindowState = WindowState.Minimized;
-
-        ConfigureCaptionButton(_maximizeButton, LucideIconKind.Maximize2, "Maximize window");
-        _maximizeButton.Click += (_, _) => ToggleMaximize();
-
-        ConfigureCaptionButton(_closeButton, LucideIconKind.X, "Close window");
-        _closeButton.Click += (_, _) => Close();
-        _closeButton.PointerEntered += (_, _) =>
-        {
-            _closeButton.Background = new SolidColorBrush(Color.Parse("#C42B1C"));
-            _closeButton.Foreground = Brushes.White;
-        };
-        _closeButton.PointerExited += (_, _) =>
-        {
-            _closeButton.Background = Brushes.Transparent;
-            _closeButton.Foreground = _palette.PrimaryText;
-        };
-
-        return new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            Children = { _minimizeButton, _maximizeButton, _closeButton }
-        };
-    }
-
-    private void ConfigureCaptionButton(Button button, LucideIconKind icon, string accessibleName)
-    {
-        button.Content = BnpIcons.Create(icon, 16);
-        button.Width = 46;
-        button.MinHeight = 43;
-        button.Padding = new Thickness(0);
-        button.Focusable = false;
-        button.Background = Brushes.Transparent;
-        button.BorderBrush = Brushes.Transparent;
-        button.BorderThickness = new Thickness(0);
-        button.CornerRadius = new CornerRadius(0);
-        button.HorizontalContentAlignment = HorizontalAlignment.Center;
-        button.VerticalContentAlignment = VerticalAlignment.Center;
-        button.PointerEntered += (_, _) => button.Background = _palette.ButtonHover;
-        button.PointerExited += (_, _) => button.Background = Brushes.Transparent;
-        ToolTip.SetTip(button, accessibleName);
-        AutomationProperties.SetName(button, accessibleName);
-    }
-
-    private void OnTitleBarPointerPressed(object? sender, PointerPressedEventArgs eventArgs)
-    {
-        if (!eventArgs.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-        {
-            return;
-        }
-
-        if (eventArgs.ClickCount == 2 && CanMaximize)
-        {
-            ToggleMaximize();
-            eventArgs.Handled = true;
-            return;
-        }
-
-        BeginMoveDrag(eventArgs);
-        eventArgs.Handled = true;
-    }
-
-    private void ToggleMaximize()
-    {
-        WindowState = WindowState == WindowState.Maximized
-            ? WindowState.Normal
-            : WindowState.Maximized;
-    }
-
-    private void AddResizeZones()
-    {
-        AddResizeZone(WindowEdge.North, horizontalAlignment: HorizontalAlignment.Stretch,
-            verticalAlignment: VerticalAlignment.Top, height: 6);
-        AddResizeZone(WindowEdge.South, horizontalAlignment: HorizontalAlignment.Stretch,
-            verticalAlignment: VerticalAlignment.Bottom, height: 6);
-        AddResizeZone(WindowEdge.West, horizontalAlignment: HorizontalAlignment.Left,
-            verticalAlignment: VerticalAlignment.Stretch, width: 6);
-        AddResizeZone(WindowEdge.East, horizontalAlignment: HorizontalAlignment.Right,
-            verticalAlignment: VerticalAlignment.Stretch, width: 6);
-        AddResizeZone(WindowEdge.NorthWest, HorizontalAlignment.Left, VerticalAlignment.Top, 10, 10);
-        AddResizeZone(WindowEdge.NorthEast, HorizontalAlignment.Right, VerticalAlignment.Top, 10, 10);
-        AddResizeZone(WindowEdge.SouthWest, HorizontalAlignment.Left, VerticalAlignment.Bottom, 10, 10);
-        AddResizeZone(WindowEdge.SouthEast, HorizontalAlignment.Right, VerticalAlignment.Bottom, 10, 10);
-    }
-
-    private void AddResizeZone(
-        WindowEdge edge,
-        HorizontalAlignment horizontalAlignment,
-        VerticalAlignment verticalAlignment,
-        double width = double.NaN,
-        double height = double.NaN)
-    {
-        var zone = new Border
-        {
-            Width = width,
-            Height = height,
-            Background = Brushes.Transparent,
-            HorizontalAlignment = horizontalAlignment,
-            VerticalAlignment = verticalAlignment,
-            ZIndex = 1000
-        };
-        zone.PointerPressed += (_, eventArgs) =>
-        {
-            if (WindowState == WindowState.Normal &&
-                eventArgs.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-            {
-                BeginResizeDrag(edge, eventArgs);
-                eventArgs.Handled = true;
-            }
-        };
-        Grid.SetColumnSpan(zone, 2);
-        Grid.SetRowSpan(zone, 3);
-        _rootLayout.Children.Add(zone);
-        _resizeZones.Add(zone);
+        _isSidebarCollapsed = !_isSidebarCollapsed;
+        _sidebar.IsVisible = !_isSidebarCollapsed;
+        _sidebarColumn.Width = _isSidebarCollapsed ? new GridLength(0) : new GridLength(252);
+        _repository.SetSidebarCollapsed(_isSidebarCollapsed);
+        return _isSidebarCollapsed;
     }
 
     private Grid BuildSidebar()
@@ -437,56 +231,15 @@ public sealed class MainWindow : Window, IDisposable
 
     private Grid BuildEditorArea()
     {
-        _textColorButton = CreateIconButton(LucideIconKind.Palette, "Text color");
-        _textColorButton.Focusable = false;
-        AttachTextColorMenu(_textColorButton);
-        UpdateTextColorButton();
-
-        var toolbar = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 3,
-            Margin = new Thickness(10, 5),
-            Children =
-            {
-                CreateFormattingButton(LucideIconKind.Undo2, "Undo", _editor.Undo),
-                CreateFormattingButton(LucideIconKind.Redo2, "Redo", _editor.Redo),
-                CreateToolbarSeparator(),
-                CreateFormattingButton(LucideIconKind.Bold, "Bold", _editor.ToggleBold),
-                CreateFormattingButton(LucideIconKind.Italic, "Italic", _editor.ToggleItalic),
-                CreateFormattingButton(
-                    LucideIconKind.Highlighter,
-                    "Highlight",
-                    ToggleHighlight),
-                _textColorButton,
-                CreateToolbarSeparator(),
-                CreateFormattingButton(
-                    LucideIconKind.TextAlignStart,
-                    "Align left",
-                    () => _editor.SetTextAlignment(TextAlignment.Left)),
-                CreateFormattingButton(
-                    LucideIconKind.TextAlignCenter,
-                    "Align center",
-                    () => _editor.SetTextAlignment(TextAlignment.Center)),
-                CreateFormattingButton(
-                    LucideIconKind.TextAlignEnd,
-                    "Align right",
-                    () => _editor.SetTextAlignment(TextAlignment.Right))
-            }
-        };
-
-        _toolbarBorder.MinHeight = 43;
-        _toolbarBorder.BorderThickness = new Thickness(0, 0, 0, 1);
-        _toolbarBorder.Child = toolbar;
         _editorSurface.Content = _editor;
-        _editorSurface.Padding = new Thickness(32, 24);
+        _editorSurface.Padding = new Thickness(12, 8);
         _editorSurface.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
         _editorSurface.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
 
         var editorArea = new Grid
         {
             RowDefinitions = new RowDefinitions("Auto,*"),
-            Children = { _toolbarBorder, _editorSurface }
+            Children = { _editorToolbar.View, _editorSurface }
         };
         Grid.SetRow(_editorSurface, 1);
         return editorArea;
@@ -543,7 +296,7 @@ public sealed class MainWindow : Window, IDisposable
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Content = content
         };
-        var settingsFlyout = CreateDocumentSettingsFlyout(document);
+        var settingsFlyout = _documentSettingsFlyoutFactory.Create(document);
         FlyoutBase.SetAttachedFlyout(settingsButton, settingsFlyout);
         settingsButton.Click += (_, eventArgs) =>
         {
@@ -554,190 +307,6 @@ public sealed class MainWindow : Window, IDisposable
         item.PointerEntered += (_, _) => settingsButton.IsVisible = true;
         item.PointerExited += (_, _) => settingsButton.IsVisible = false;
         return item;
-    }
-
-    private Flyout CreateDocumentSettingsFlyout(DocumentSummary document)
-    {
-        var selectedIconKey = document.IconKey;
-        var selectedColorKey = document.ColorKey;
-        var titleEditor = new TextBox
-        {
-            Text = document.Title,
-            MinWidth = 310,
-            MaxLength = 120
-        };
-        AutomationProperties.SetName(titleEditor, "Document name");
-
-        var preview = new Button
-        {
-            Content = BnpIcons.CreateDocumentIcon(selectedIconKey, selectedColorKey, 22),
-            Width = 40,
-            Height = 40,
-            Padding = new Thickness(8),
-            IsHitTestVisible = false,
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center
-        };
-
-        var iconButtons = new List<(Button Button, string Key)>();
-        var iconPanel = new WrapPanel
-        {
-            Orientation = Orientation.Horizontal,
-            ItemWidth = 36,
-            ItemHeight = 36
-        };
-        foreach (var option in BnpIcons.DocumentIcons)
-        {
-            var iconButton = CreateIconButton(option.Kind, option.Label);
-            iconButton.Width = 34;
-            iconButton.Height = 34;
-            iconButton.Padding = new Thickness(7);
-            iconButtons.Add((iconButton, option.Key));
-            iconPanel.Children.Add(iconButton);
-            iconButton.Click += (_, _) =>
-            {
-                selectedIconKey = option.Key;
-                preview.Content = BnpIcons.CreateDocumentIcon(selectedIconKey, selectedColorKey, 22);
-                RefreshIconSelection();
-            };
-        }
-
-        var colorButtons = new List<(Button Button, string Color)>();
-        var colorPanel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 7
-        };
-        foreach (var (label, color) in DocumentColorOptions)
-        {
-            var colorButton = new Button
-            {
-                Width = 25,
-                Height = 25,
-                Padding = new Thickness(4),
-                Background = Brushes.Transparent,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4),
-                Content = new Border
-                {
-                    Width = 15,
-                    Height = 15,
-                    Background = new SolidColorBrush(Color.Parse(color)),
-                    CornerRadius = new CornerRadius(3)
-                }
-            };
-            ToolTip.SetTip(colorButton, label);
-            AutomationProperties.SetName(colorButton, label);
-            colorButtons.Add((colorButton, color));
-            colorPanel.Children.Add(colorButton);
-            colorButton.Click += (_, _) =>
-            {
-                selectedColorKey = color;
-                preview.Content = BnpIcons.CreateDocumentIcon(selectedIconKey, selectedColorKey, 22);
-                RefreshColorSelection();
-            };
-        }
-
-        var flyout = new Flyout();
-        var cancelButton = new Button { Content = "Cancel" };
-        var saveButton = new Button { Content = "Save" };
-        cancelButton.Click += (_, _) => flyout.Hide();
-        saveButton.Click += (_, _) =>
-        {
-            if (SaveDocumentSettings(document.Id, titleEditor.Text, selectedIconKey, selectedColorKey))
-            {
-                flyout.Hide();
-            }
-            else
-            {
-                titleEditor.Focus();
-            }
-        };
-        titleEditor.KeyDown += (_, eventArgs) =>
-        {
-            if (eventArgs.Key == Key.Enter)
-            {
-                saveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                eventArgs.Handled = true;
-            }
-            else if (eventArgs.Key == Key.Escape)
-            {
-                flyout.Hide();
-                eventArgs.Handled = true;
-            }
-        };
-
-        var header = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-            Children =
-            {
-                new TextBlock
-                {
-                    Text = "Document settings",
-                    FontSize = 15,
-                    FontWeight = FontWeight.SemiBold,
-                    VerticalAlignment = VerticalAlignment.Center
-                },
-                preview
-            }
-        };
-        Grid.SetColumn(preview, 1);
-
-        var footer = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Children = { cancelButton, saveButton }
-        };
-        flyout.Content = new StackPanel
-        {
-            Width = 330,
-            Spacing = 10,
-            Children =
-            {
-                header,
-                new TextBlock { Text = "Name", FontSize = 12, FontWeight = FontWeight.SemiBold },
-                titleEditor,
-                new TextBlock { Text = "Icon", FontSize = 12, FontWeight = FontWeight.SemiBold },
-                new ScrollViewer
-                {
-                    Content = iconPanel,
-                    Height = 180,
-                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto
-                },
-                new TextBlock { Text = "Color", FontSize = 12, FontWeight = FontWeight.SemiBold },
-                colorPanel,
-                footer
-            }
-        };
-        flyout.Opened += (_, _) =>
-        {
-            titleEditor.SelectAll();
-            titleEditor.Focus();
-        };
-        RefreshIconSelection();
-        RefreshColorSelection();
-        return flyout;
-
-        void RefreshIconSelection()
-        {
-            foreach (var (button, key) in iconButtons)
-            {
-                button.Background = key == selectedIconKey ? _palette.Selection : Brushes.Transparent;
-            }
-        }
-
-        void RefreshColorSelection()
-        {
-            foreach (var (button, color) in colorButtons)
-            {
-                button.BorderBrush = color == selectedColorKey ? _palette.PrimaryText : _palette.Border;
-                button.BorderThickness = color == selectedColorKey ? new Thickness(2) : new Thickness(1);
-            }
-        }
     }
 
     private bool SaveDocumentSettings(
@@ -773,7 +342,7 @@ public sealed class MainWindow : Window, IDisposable
         if (documentId == _currentDocument.Id)
         {
             _currentDocument = updatedDocument;
-            _titleDisplay.Text = title;
+            _chrome.SetDocumentTitle(title);
             Title = $"BNP - {title}";
         }
 
@@ -797,12 +366,6 @@ public sealed class MainWindow : Window, IDisposable
                 _autosave.Queue(CreateCurrentSnapshot);
             }
         };
-        _editor.SelectionChanged += (_, _) => SyncTextColorFromCaret();
-        _editor.AddHandler(
-            InputElement.KeyDownEvent,
-            OnEditorKeyDown,
-            RoutingStrategies.Tunnel,
-            handledEventsToo: true);
         _autosave.StatusChanged += status =>
         {
             _saveStatus.Text = status switch
@@ -854,7 +417,7 @@ public sealed class MainWindow : Window, IDisposable
         try
         {
             _currentDocument = document;
-            _titleDisplay.Text = document.Title;
+            _chrome.SetDocumentTitle(document.Title);
             Title = $"BNP - {document.Title}";
 
             if (document.ContentFormat == DocumentFormats.AvaloniaRichEditorJsonV1)
@@ -868,7 +431,7 @@ public sealed class MainWindow : Window, IDisposable
             }
 
             ApplyDocumentTextTheme();
-            SyncTextColorFromCaret();
+            _editorToolbar.SyncFromCaret();
             _editor.MarkSaved();
             _saveStatus.Text = "Saved";
         }
@@ -887,96 +450,6 @@ public sealed class MainWindow : Window, IDisposable
             UpdatedAt = DateTimeOffset.UtcNow
         };
         return _currentDocument;
-    }
-
-    private void AttachTextColorMenu(Button button)
-    {
-        var menu = new MenuFlyout();
-        AddTextColorMenuItem(menu, "Automatic", GetAutomaticTextBrush, isAutomatic: true);
-
-        foreach (var (label, color) in TextColorOptions)
-        {
-            AddTextColorMenuItem(
-                menu,
-                label,
-                () => new SolidColorBrush(Color.Parse(color)));
-        }
-
-        FlyoutBase.SetAttachedFlyout(button, menu);
-        button.Click += (_, _) => FlyoutBase.ShowAttachedFlyout(button);
-    }
-
-    private void AddTextColorMenuItem(
-        MenuFlyout menu,
-        string label,
-        Func<IBrush> getBrush,
-        bool isAutomatic = false)
-    {
-        var brush = getBrush();
-        var item = new MenuItem
-        {
-            Header = label,
-            Icon = new Border
-            {
-                Width = 14,
-                Height = 14,
-                Background = brush,
-                BorderBrush = _palette.Border,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(2)
-            }
-        };
-        item.Click += (_, _) =>
-        {
-            _editor.Focus();
-            _activeTextColor = isAutomatic ? null : getBrush();
-            _editor.SetForeground(GetActiveTextBrush());
-            UpdateTextColorButton();
-        };
-        menu.Items.Add(item);
-    }
-
-    private void OnEditorKeyDown(object? sender, KeyEventArgs eventArgs)
-    {
-        if (eventArgs.Key != Key.Enter || eventArgs.KeyModifiers.HasFlag(KeyModifiers.Shift))
-        {
-            return;
-        }
-
-        var activeTextColor = _activeTextColor;
-        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-        {
-            _activeTextColor = activeTextColor;
-            _editor.SetForeground(GetActiveTextBrush());
-            UpdateTextColorButton();
-        });
-    }
-
-    private void ToggleHighlight()
-    {
-        var background = _editor.GetCaretFormat().Background;
-        var isHighlighted = background is SolidColorBrush { Color.A: > 0 };
-        _editor.SetHighlight(isHighlighted ? Brushes.Transparent : _palette.Highlight);
-    }
-
-    private void SyncTextColorFromCaret()
-    {
-        var foreground = _editor.GetCaretFormat().Foreground;
-        _activeTextColor = UsesAutomaticTextColor(foreground) ? null : foreground;
-        UpdateTextColorButton();
-    }
-
-    private IBrush GetActiveTextBrush()
-    {
-        return _activeTextColor ?? GetAutomaticTextBrush();
-    }
-
-    private void UpdateTextColorButton()
-    {
-        if (_textColorButton is not null)
-        {
-            _textColorButton.Foreground = GetActiveTextBrush();
-        }
     }
 
     private void OnWindowKeyDown(object? sender, KeyEventArgs eventArgs)
@@ -1019,29 +492,6 @@ public sealed class MainWindow : Window, IDisposable
         return button;
     }
 
-    private Button CreateFormattingButton(
-        LucideIconKind icon,
-        string accessibleName,
-        Action action)
-    {
-        var button = CreateIconButton(icon, accessibleName);
-        button.Focusable = false;
-        button.Click += (_, _) => action();
-        return button;
-    }
-
-    private Border CreateToolbarSeparator()
-    {
-        return new Border
-        {
-            Width = 1,
-            Height = 20,
-            Margin = new Thickness(4, 6),
-            Background = _palette.Border,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-    }
-
     private void ApplyTheme()
     {
         _palette = BnpTheme.GetPalette(ActualThemeVariant);
@@ -1050,93 +500,23 @@ public sealed class MainWindow : Window, IDisposable
         _windowFrame.Background = _palette.Window;
         _windowFrame.BorderBrush = _palette.Border;
         _rootLayout.Background = _palette.Window;
-        _headerBorder.Background = _palette.Header;
-        _headerBorder.BorderBrush = _palette.Border;
+        _chrome.ApplyTheme();
         _sidebar.Background = _palette.Sidebar;
         _sidebar.BorderBrush = _palette.Border;
-        _toolbarBorder.Background = _palette.Toolbar;
-        _toolbarBorder.BorderBrush = _palette.Border;
+        _editorToolbar.ApplyPalette();
         _editorSurface.Background = _palette.Editor;
         _statusBorder.Background = _palette.Status;
         _statusBorder.BorderBrush = _palette.Border;
-        _titleDisplay.Foreground = _palette.PrimaryText;
         _documentList.Foreground = _palette.PrimaryText;
         _saveStatus.Foreground = _palette.SecondaryText;
-        _minimizeButton.Foreground = _palette.PrimaryText;
-        _maximizeButton.Foreground = _palette.PrimaryText;
-        _closeButton.Foreground = _palette.PrimaryText;
         _editor.CaretBrush = _palette.PrimaryText;
         _editor.SelectionBrush = _palette.Selection;
         ApplyDocumentTextTheme();
-        UpdateTextColorButton();
-        ApplyWindowState();
-    }
-
-    private void ApplyWindowState()
-    {
-        var isMaximized = WindowState == WindowState.Maximized;
-        _maximizeButton.Content = BnpIcons.Create(
-            isMaximized ? LucideIconKind.Copy : LucideIconKind.Maximize2,
-            16);
-
-        var maximizeLabel = isMaximized ? "Restore window" : "Maximize window";
-        ToolTip.SetTip(_maximizeButton, maximizeLabel);
-        AutomationProperties.SetName(_maximizeButton, maximizeLabel);
-        _windowFrame.BorderThickness = isMaximized ? new Thickness(0) : new Thickness(1);
-        _windowFrame.CornerRadius = isMaximized ? new CornerRadius(0) : new CornerRadius(8);
-        _windowFrame.ClipToBounds = !isMaximized;
-        CornerRadius = isMaximized ? new CornerRadius(0) : new CornerRadius(8);
-        ClipToBounds = !isMaximized;
-        Win32Properties.SetWindowCornerPreference(
-            this,
-            isMaximized
-                ? Win32Properties.WindowCornerPreference.DoNotRound
-                : Win32Properties.WindowCornerPreference.RoundSmall);
-
-        foreach (var zone in _resizeZones)
-        {
-            zone.IsVisible = !isMaximized;
-        }
     }
 
     private void ApplyDocumentTextTheme()
     {
-        if (_editor.Document is not { } document)
-        {
-            return;
-        }
-
-        foreach (var block in document.Blocks)
-        {
-            ApplyBlockTextTheme(block);
-        }
-
-        _editor.InvalidateVisual();
-    }
-
-    private void ApplyBlockTextTheme(Block block)
-    {
-        if (block is Paragraph paragraph)
-        {
-            foreach (var inline in paragraph.Inlines)
-            {
-                if (inline is AvaloniaRichEditor.Documents.Run run)
-                {
-                    if (UsesAutomaticTextColor(run.Foreground))
-                    {
-                        run.Foreground = GetAutomaticTextBrush();
-                    }
-                }
-                else if (inline is InlineTable inlineTable)
-                {
-                    ApplyTableTextTheme(inlineTable.Table);
-                }
-            }
-        }
-        else if (block is TableBlock table)
-        {
-            ApplyTableTextTheme(table);
-        }
+        RichEditorThemeApplicator.Apply(_editor, GetAutomaticTextBrush());
     }
 
     private IBrush GetAutomaticTextBrush()
@@ -1144,32 +524,6 @@ public sealed class MainWindow : Window, IDisposable
         return ActualThemeVariant == ThemeVariant.Dark
             ? Brushes.White
             : _palette.PrimaryText;
-    }
-
-    private static bool UsesAutomaticTextColor(IBrush? brush)
-    {
-        if (brush is not SolidColorBrush solidColorBrush)
-        {
-            return brush is null;
-        }
-
-        return solidColorBrush.Color == Color.Parse("#202020") ||
-         solidColorBrush.Color == Color.Parse("#F6F5F4") ||
-         solidColorBrush.Color == Colors.White;
-    }
-
-    private void ApplyTableTextTheme(TableBlock table)
-    {
-        foreach (var row in table.Cells)
-        {
-            foreach (var cell in row)
-            {
-                foreach (var block in cell.Blocks)
-                {
-                    ApplyBlockTextTheme(block);
-                }
-            }
-        }
     }
 
     private static DocumentSummary ToSummary(DocumentRecord document)
