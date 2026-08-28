@@ -110,7 +110,7 @@ Good places to begin include editor round-trip tests, keyboard and screen-reader
 
 ## License
 
-Better Notepad is free and open-source software licensed under the [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html). If you modify and provide the software over a network, the AGPL requires you to make the corresponding source code available to its users.
+Better Notepad is free and open-source software licensed under the [GNU Affero General Public License v3.0](LICENSE). If you modify and provide the software over a network, the AGPL requires you to make the corresponding source code available to its users.
 
 ## AI Disclaimer
 
